@@ -1,0 +1,9 @@
+Client: Ivan Ivanov
+Email: ivan.ivanov@example.com
+Phone: +7 (999) 123-45-67
+RU паспорт: 45 11 123456
+AM Passport: AB1234567
+EU Document No: AA1234567
+Card: 4111 1111 1111 1111
+IBAN: DE89370400440532013000
+SWIFT: DEUTDEFF

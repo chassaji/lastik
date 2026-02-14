@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <g transform="rotate(-15 16 16)">
+    <!-- Pencil eraser part (red/pink) -->
+    <path d="M4 10h14v12H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z" fill="#f43f5e"/>
+    <!-- Ink eraser part (blue) -->
+    <path d="M18 10h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H18V10z" fill="#3b82f6"/>
+    <!-- Divider -->
+    <rect x="17" y="10" width="2" height="12" fill="white" fill-opacity="0.3"/>
+    <!-- Texture/Details -->
+    <rect x="6" y="13" width="6" height="1.5" rx="0.75" fill="white" fill-opacity="0.3"/>
+    <rect x="6" y="17" width="4" height="1.5" rx="0.75" fill="white" fill-opacity="0.3"/>
+  </g>
+</svg>
