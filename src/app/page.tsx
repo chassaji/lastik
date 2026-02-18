@@ -631,8 +631,8 @@ export default function Home() {
 
           {!isSidebarCollapsed ? (
             <div className="flex flex-1 flex-col overflow-hidden animate-in fade-in duration-500">
-              <div className="flex-none border-b border-(--border)/40">
-                <div className="px-5 pt-5 pb-3 flex items-center gap-2.5">
+              <div className="flex-none flex items-center border-b border-(--border)/40 bg-white px-5 py-3">
+                <div className="flex items-center gap-2.5">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" className="w-8 h-8 drop-shadow-sm flex-none">
                     <g transform="rotate(-15 50 50)">
                       <path d="M20 40 L60 40 L60 70 L20 70 Z" fill="#E86A5E"/>
@@ -645,12 +645,12 @@ export default function Home() {
                     <span className="text-[9px] font-bold text-(--text-tertiary) uppercase tracking-[0.2em]">De-identification</span>
                   </div>
                 </div>
-                <div className="px-5 pb-3 flex items-center justify-between">
-                  <h2 className="text-[13px] font-semibold uppercase tracking-widest text-(--text-tertiary)">Detections</h2>
-                  <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) px-2 py-0.5 rounded-full">
-                    {combinedEntities.length}
-                  </span>
-                </div>
+              </div>
+              <div className="flex-none flex items-center justify-between px-5 py-3">
+                <h2 className="text-[13px] font-semibold uppercase tracking-widest text-(--text-tertiary)">Detections</h2>
+                <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) px-2 py-0.5 rounded-full">
+                  {combinedEntities.length}
+                </span>
               </div>
               <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
                 <ReviewSidebar
