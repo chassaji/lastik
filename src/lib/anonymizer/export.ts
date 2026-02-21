@@ -11,6 +11,7 @@ interface MappingExportRow {
   region: string;
   source: string;
   replacement: string;
+  enabled: boolean;
   ruleId: string;
   confidence: string;
   start: string;
@@ -38,6 +39,7 @@ function toRows(records: MappingRecord[], options: ExportOptions): MappingExport
       region: record.region ?? "",
       source,
       replacement: record.replacement,
+      enabled: record.enabled !== false,
       ruleId: record.ruleId,
       confidence: record.confidence.toFixed(2),
       start: String(record.position.start),

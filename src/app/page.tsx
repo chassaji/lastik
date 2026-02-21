@@ -349,6 +349,8 @@ export default function Home() {
   const [activePanel, setActivePanel] = useState<"input" | "output">("input");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [importedMappings, setImportedMappings] = useState<MappingRecord[]>([]);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -357,6 +359,12 @@ export default function Home() {
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
+
+  useEffect(() => {
+    if (!statusMessage) return;
+    const timer = setTimeout(() => setStatusMessage(""), 3000);
+    return () => clearTimeout(timer);
+  }, [statusMessage]);
 
   const combinedEntities = useMemo(() => {
     const base = result?.entities ?? [];
@@ -537,6 +545,133 @@ export default function Home() {
       () => setStatusMessage("Copied to clipboard."),
       () => setErrorMessage("Failed to copy."),
     );
+  }
+
+  function handleExportMapping() {
+    const byReplacement = new Map<string, MappingRecord>();
+    // Start with imported as base (preserve their enabled state)
+    importedMappings.forEach((m) => byReplacement.set(m.replacement, m));
+    // Overwrite with ALL current entities (enabled AND disabled)
+    combinedEntities.forEach((e) => {
+      const id = e.entityId ?? `${e.type}_${e.start}_${e.end}`;
+      if (!e.replacement) return;
+      const isEnabled = !disabledEntityIds.has(id);
+      const existing = byReplacement.get(e.replacement);
+      byReplacement.set(e.replacement, {
+        entityId: id,
+        type: e.type,
+        region: e.region,
+        source: e.source,
+        replacement: e.replacement,
+        ruleId: e.ruleId,
+        confidence: e.confidence,
+        position: { start: e.start, end: e.end },
+        // enabled = true if ANY occurrence of this replacement is active
+        enabled: existing?.enabled === true || isEnabled,
+      });
+    });
+    if (byReplacement.size === 0) return;
+    const json = mappingToJson(Array.from(byReplacement.values()), { includeSourceValues: true });
+    downloadTextFile("lastik-mapping.json", json);
+    setStatusMessage(`Exported ${byReplacement.size} ${byReplacement.size === 1 ? "entry" : "entries"}.`);
+  }
+
+  async function handleImportMapping(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (parsed.schemaVersion !== "1.0" || !Array.isArray(parsed.items)) {
+        setErrorMessage("Invalid mapping file format.");
+        return;
+      }
+      const loaded: MappingRecord[] = parsed.items.map((item: Record<string, unknown>) => ({
+        entityId: String(item.entityId),
+        type: item.type as EntityType,
+        region: item.region ? String(item.region) : undefined,
+        source: String(item.source),
+        replacement: String(item.replacement),
+        enabled: item.enabled !== false,
+        ruleId: String(item.ruleId),
+        confidence: parseFloat(String(item.confidence)),
+        position: { start: parseInt(String(item.start)), end: parseInt(String(item.end)) },
+      }));
+      // Keep importedMappings for export deduplication
+      setImportedMappings((prev) => {
+        const byReplacement = new Map(prev.map((m) => [m.replacement, m]));
+        loaded.forEach((m) => byReplacement.set(m.replacement, m));
+        return Array.from(byReplacement.values());
+      });
+
+      // Apply to current text: search for each source string, create entities at real positions
+      if (input.trim()) {
+        const foundEntities: DetectorMatch[] = [];
+        // Deduplicate by source (same source → same replacement from mapping)
+        const uniqueBySource = new Map<string, MappingRecord>();
+        loaded.forEach((m) => uniqueBySource.set(m.source, m));
+
+        let foundSourcesCount = 0;
+        uniqueBySource.forEach((mapping) => {
+          let searchFrom = 0;
+          let foundOnce = false;
+          while (true) {
+            const pos = input.indexOf(mapping.source, searchFrom);
+            if (pos === -1) break;
+            foundOnce = true;
+            const end = pos + mapping.source.length;
+            foundEntities.push({
+              entityId: `imported_${mapping.type}_${pos}_${end}`,
+              type: mapping.type,
+              start: pos,
+              end,
+              source: mapping.source,
+              replacement: mapping.replacement,
+              ruleId: mapping.ruleId,
+              region: mapping.region,
+              confidence: mapping.confidence,
+              confidenceBasis: "imported-mapping",
+              detectorSource: "universal",
+              priority: 100,
+            });
+            searchFrom = end;
+          }
+          if (foundOnce) foundSourcesCount++;
+        });
+        const notFoundCount = uniqueBySource.size - foundSourcesCount;
+
+        // Restore disabled state: if a replacement was disabled in the file, disable all its matches
+        const disabledReplacements = new Set<string>(
+          loaded.filter((m) => m.enabled === false).map((m) => m.replacement)
+        );
+        const toDisable = new Set<string>(
+          foundEntities
+            .filter((e) => disabledReplacements.has(e.replacement ?? ""))
+            .map((e) => e.entityId!)
+        );
+
+        // Use mergeEntities to get the actual count after overlap resolution (matches Detections badge)
+        const resolvedCount = mergeEntities([], foundEntities).length;
+        setManualEntities(foundEntities);
+        setDisabledEntityIds(toDisable);
+        setResult({
+          originalText: input,
+          anonymizedText: input,
+          entities: [],
+          mappings: [],
+        });
+        setStatusMessage(
+          resolvedCount > 0
+            ? `Loaded ${loaded.length} rules. Found ${resolvedCount} matches.${notFoundCount > 0 ? ` Not found: ${notFoundCount}.` : ""}`
+            : `Loaded ${loaded.length} rules. Not found in current text.`
+        );
+      } else {
+        setStatusMessage(`Loaded ${loaded.length} rules. Paste text to apply.`);
+      }
+    } catch {
+      setErrorMessage("Could not read mapping file.");
+    }
   }
 
   function handleClear() {
@@ -844,11 +979,6 @@ export default function Home() {
                   >
                     {isPending ? "Analyzing..." : "Analyze"}
                   </button>
-                  {statusMessage && !errorMessage && (
-                    <span className="text-xs font-semibold text-(--accent) animate-in fade-in slide-in-from-right-2">
-                      {statusMessage}
-                    </span>
-                  )}
                   <div className="w-px h-4 bg-(--border)" />
                   <div className="flex items-center gap-1">
                   <button
@@ -911,13 +1041,33 @@ export default function Home() {
                   <h2 className="text-xs font-semibold uppercase tracking-widest text-(--text-tertiary)">Review & Masking</h2>
                   <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">INTERACTIVE</span>
                 </div>
-                <button
-                  onClick={handleCopyOutput}
-                  className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                  title="Copy anonymized result"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* Export mapping */}
+                  <button
+                    onClick={handleExportMapping}
+                    disabled={!result && importedMappings.length === 0}
+                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Download mapping as JSON"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                  </button>
+                  {/* Import mapping */}
+                  <button
+                    onClick={() => importFileRef.current?.click()}
+                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                    title="Load mapping from JSON file"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                  </button>
+                  {/* Copy output */}
+                  <button
+                    onClick={handleCopyOutput}
+                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                    title="Copy anonymized result"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                  </button>
+                </div>
               </div>
               <div
                 ref={outputEditorRef}
@@ -932,6 +1082,20 @@ export default function Home() {
         </main>
       </div>
       
+      <input
+        ref={importFileRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={handleImportMapping}
+      />
+
+      {statusMessage && !errorMessage && (
+        <div className="fixed bottom-6 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 z-50 rounded-2xl border border-(--accent)/20 bg-(--accent-muted) px-6 py-3 text-sm font-semibold text-(--accent) shadow-2xl animate-in fade-in slide-in-from-bottom-4 text-center">
+          {statusMessage}
+        </div>
+      )}
+
       {errorMessage && (
         <div className="fixed bottom-6 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 z-50 rounded-2xl border border-(--error-border) bg-(--error-bg) px-6 py-3 text-sm font-semibold text-(--error-fg) shadow-2xl animate-in fade-in slide-in-from-bottom-4 text-center">
           {errorMessage}

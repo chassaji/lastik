@@ -60,6 +60,7 @@ export interface MappingRecord {
     start: number;
     end: number;
   };
+  enabled?: boolean;
 }
 
 export interface AnalyzeOptions {
