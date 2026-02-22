@@ -12,7 +12,9 @@ import type {
   ReplaceMode,
   UserRule,
 } from "@/lib/anonymizer/types";
-import { useMemo, useRef, useState, useTransition, useEffect } from "react";
+import { useMemo, useRef, useState, useTransition, useEffect, useLayoutEffect } from "react";
+
+const ENTITY_JUMP_FLASH_MS = 3000;
 
 
 function getEntityId(entity: AnalyzeResult["entities"][number]): string {
@@ -289,6 +291,7 @@ function renderInteractivePreview(
   disabled: Set<string>,
   onToggle: (entityId: string) => void,
   onToggleLocal: (entityId: string) => void,
+  flashEntityId: string | null,
 ) {
   if (!entities.length) return text;
 
@@ -325,10 +328,13 @@ function renderInteractivePreview(
     const count = frequencies.get(`${entity.type}|${entity.source}`) ?? 0;
     const displayedContent = isDisabled ? text.slice(entity.start, entity.end) : (entity.replacement ?? entity.source);
 
+    const isFlashing = flashEntityId === id;
+
     parts.push(
       <mark
         key={`entity-${id}-${index}`}
         data-original-start={entity.start}
+        data-entity-id={id}
         role="button"
         tabIndex={0}
         onClick={() => onToggle(id)}
@@ -338,7 +344,20 @@ function renderInteractivePreview(
             onToggle(id);
           }
         }}
-        className={`${isDisabled ? "bg-(--highlight-disabled) text-zinc-400" : "bg-(--highlight-active) text-foreground"} cursor-pointer rounded px-1 transition-colors relative group`}
+        className={`${isDisabled ? "bg-(--highlight-disabled) text-zinc-400" : "bg-(--highlight-active) text-foreground"} ${
+          isFlashing ? "ring-2 ring-amber-400 shadow-[0_0_0_4px_rgba(251,191,36,0.25)] animate-pulse" : ""
+        } cursor-pointer rounded transition-colors relative group`}
+        style={
+          isFlashing
+            ? {
+                backgroundColor: "var(--accent-muted)",
+                color: "var(--accent)",
+                outline: "2px solid var(--accent)",
+                outlineOffset: "1px",
+                boxShadow: "0 0 0 8px var(--accent-muted), 0 8px 24px rgba(15,23,42,0.16)",
+              }
+            : undefined
+        }
         title={isDisabled ? "Masking disabled (click to enable)" : "Masking enabled (click to disable)"}
       >
         {displayedContent}
@@ -399,8 +418,11 @@ function buildOutputText(
 
 
 export default function Home() {
-  const inputEditorRef = useRef<HTMLDivElement | null>(null);
+  const inputEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const outputEditorRef = useRef<HTMLDivElement | null>(null);
+  const flashTimeoutRef = useRef<number | null>(null);
+  const scrollSyncOwnerRef = useRef<"input" | "output" | null>(null);
+  const scrollSyncReleaseRef = useRef<number | null>(null);
   const [input, setInput] = useState(defaultInput);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [userRules, setUserRules] = useState<UserRule[]>([]);
@@ -414,6 +436,7 @@ export default function Home() {
   const [isPending, startTransition] = useTransition();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number } | null>(null);
+  const [jumpFlashEntityId, setJumpFlashEntityId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<"input" | "output">("input");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => {
@@ -434,6 +457,38 @@ export default function Home() {
     const timer = setTimeout(() => setStatusMessage(""), 3000);
     return () => clearTimeout(timer);
   }, [statusMessage]);
+
+  useEffect(() => {
+    return () => {
+      if (flashTimeoutRef.current !== null) {
+        window.clearTimeout(flashTimeoutRef.current);
+      }
+      if (scrollSyncReleaseRef.current !== null) {
+        window.cancelAnimationFrame(scrollSyncReleaseRef.current);
+      }
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const inputEl = inputEditorRef.current;
+    const outputEl = outputEditorRef.current;
+    if (!inputEl || !outputEl) return;
+    if (!result) return;
+
+    scrollSyncOwnerRef.current = "input";
+    outputEl.scrollTop = inputEl.scrollTop;
+    outputEl.scrollLeft = inputEl.scrollLeft;
+
+    if (scrollSyncReleaseRef.current !== null) {
+      window.cancelAnimationFrame(scrollSyncReleaseRef.current);
+    }
+    scrollSyncReleaseRef.current = window.requestAnimationFrame(() => {
+      if (scrollSyncOwnerRef.current === "input") {
+        scrollSyncOwnerRef.current = null;
+      }
+      scrollSyncReleaseRef.current = null;
+    });
+  }, [result]);
 
   const manualEntities = useMemo(() => buildManualEntitiesFromRules(input, userRules), [input, userRules]);
 
@@ -481,27 +536,36 @@ export default function Home() {
     const outputEl = outputEditorRef.current;
     if (!inputEl || !outputEl) return;
 
-    let isSyncingInput = false;
-    let isSyncingOutput = false;
+    const releaseOwnerNextFrame = (owner: "input" | "output") => {
+      if (scrollSyncReleaseRef.current !== null) {
+        window.cancelAnimationFrame(scrollSyncReleaseRef.current);
+      }
+      scrollSyncReleaseRef.current = window.requestAnimationFrame(() => {
+        if (scrollSyncOwnerRef.current === owner) {
+          scrollSyncOwnerRef.current = null;
+        }
+        scrollSyncReleaseRef.current = null;
+      });
+    };
 
     const handleInputScroll = () => {
-      if (isSyncingInput) {
-        isSyncingInput = false;
+      if (scrollSyncOwnerRef.current === "output") {
         return;
       }
-      isSyncingOutput = true;
+      scrollSyncOwnerRef.current = "input";
       outputEl.scrollTop = inputEl.scrollTop;
       outputEl.scrollLeft = inputEl.scrollLeft;
+      releaseOwnerNextFrame("input");
     };
 
     const handleOutputScroll = () => {
-      if (isSyncingOutput) {
-        isSyncingOutput = false;
+      if (scrollSyncOwnerRef.current === "input") {
         return;
       }
-      isSyncingInput = true;
+      scrollSyncOwnerRef.current = "output";
       inputEl.scrollTop = outputEl.scrollTop;
       inputEl.scrollLeft = outputEl.scrollLeft;
+      releaseOwnerNextFrame("output");
     };
 
     inputEl.addEventListener("scroll", handleInputScroll);
@@ -510,6 +574,11 @@ export default function Home() {
     return () => {
       inputEl.removeEventListener("scroll", handleInputScroll);
       outputEl.removeEventListener("scroll", handleOutputScroll);
+      if (scrollSyncReleaseRef.current !== null) {
+        window.cancelAnimationFrame(scrollSyncReleaseRef.current);
+        scrollSyncReleaseRef.current = null;
+      }
+      scrollSyncOwnerRef.current = null;
     };
   }, []);
 
@@ -519,6 +588,54 @@ export default function Home() {
       replaceMode,
       enabledRegions,
     });
+  }
+
+  function focusEntityInEditors(entityId: string) {
+    const targetEntity = combinedEntities.find((entity) => getEntityId(entity) === entityId);
+    if (!targetEntity) return;
+
+    if (isMobile) {
+      setIsMobileSidebarOpen(false);
+      setActivePanel("output");
+    }
+
+    const outputEl = outputEditorRef.current;
+    const inputEl = inputEditorRef.current;
+
+    if (outputEl) {
+      const mark = outputEl.querySelector<HTMLElement>(`[data-entity-id="${entityId}"]`);
+      if (mark) {
+        const outputRect = outputEl.getBoundingClientRect();
+        const markRect = mark.getBoundingClientRect();
+        const targetTop =
+          outputEl.scrollTop +
+          (markRect.top - outputRect.top) -
+          outputEl.clientHeight / 2 +
+          markRect.height / 2;
+        const clampedTop = Math.max(0, targetTop);
+        scrollSyncOwnerRef.current = "output";
+        outputEl.scrollTop = clampedTop;
+        if (inputEl) {
+          inputEl.scrollTop = clampedTop;
+        }
+        if (scrollSyncReleaseRef.current !== null) {
+          window.cancelAnimationFrame(scrollSyncReleaseRef.current);
+        }
+        scrollSyncReleaseRef.current = window.requestAnimationFrame(() => {
+          scrollSyncOwnerRef.current = null;
+          scrollSyncReleaseRef.current = null;
+        });
+      }
+    }
+
+    setJumpFlashEntityId(entityId);
+    if (flashTimeoutRef.current !== null) {
+      window.clearTimeout(flashTimeoutRef.current);
+    }
+    flashTimeoutRef.current = window.setTimeout(() => {
+      setJumpFlashEntityId((current) => (current === entityId ? null : current));
+      flashTimeoutRef.current = null;
+    }, ENTITY_JUMP_FLASH_MS);
   }
 
   function handleAnalyze() {
@@ -767,6 +884,7 @@ export default function Home() {
                   disabledEntityIds={disabledEntityIds}
                   onToggleEntity={toggleEntity}
                   onToggleEntityLocal={toggleEntityLocal}
+                  onSelectEntity={focusEntityInEditors}
                   filterType={filterType}
                   onFilterTypeChange={setFilterType}
                   filterRegion={filterRegion}
@@ -856,6 +974,7 @@ export default function Home() {
                   disabledEntityIds={disabledEntityIds}
                   onToggleEntity={toggleEntity}
                   onToggleEntityLocal={toggleEntityLocal}
+                  onSelectEntity={focusEntityInEditors}
                   filterType={filterType}
                   onFilterTypeChange={setFilterType}
                   filterRegion={filterRegion}
@@ -994,6 +1113,7 @@ export default function Home() {
                 </div>
               </div>
               <textarea
+                ref={inputEditorRef}
                 suppressHydrationWarning
                 value={input}
                 onChange={(e) => {
@@ -1046,7 +1166,14 @@ export default function Home() {
                 className="flex-1 overflow-auto p-8 font-mono text-sm leading-7 whitespace-pre-wrap select-text selection:bg-(--accent)/20 custom-scrollbar"
               >
                 {result 
-                  ? renderInteractivePreview(result.originalText, combinedEntities, disabledEntityIds, toggleEntity, toggleEntityLocal)
+                  ? renderInteractivePreview(
+                      result.originalText,
+                      combinedEntities,
+                      disabledEntityIds,
+                      toggleEntity,
+                      toggleEntityLocal,
+                      jumpFlashEntityId,
+                    )
                   : <span className="text-(--text-tertiary)">Run analysis to see interactive preview.</span>}
               </div>
             </div>
