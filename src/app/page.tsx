@@ -3,20 +3,106 @@
 import { ReviewSidebar } from "@/components/review-sidebar";
 import { defaultInput } from "@/lib/anonymizer/default-text";
 import { analyzeText } from "@/lib/anonymizer/engine";
-import { downloadTextFile, mappingToCsv, mappingToJson } from "@/lib/anonymizer/export";
+import { downloadTextFile, userRulesToJson } from "@/lib/anonymizer/export";
 import type {
   AnalyzeResult,
   DetectorMatch,
   EntityType,
-  MappingRecord,
   RegionCode,
   ReplaceMode,
+  UserRule,
 } from "@/lib/anonymizer/types";
 import { useMemo, useRef, useState, useTransition, useEffect } from "react";
 
 
 function getEntityId(entity: AnalyzeResult["entities"][number]): string {
   return entity.entityId ?? `${entity.type}_${entity.start}_${entity.end}`;
+}
+
+const ENTITY_TYPES: EntityType[] = [
+  "USER",
+  "PERSON",
+  "ORG",
+  "DOC_ID",
+  "EMAIL",
+  "PHONE",
+  "CARD",
+  "ACCOUNT",
+  "IBAN",
+  "SWIFT_BIC",
+  "DATE",
+];
+
+function isEntityType(value: unknown): value is EntityType {
+  return typeof value === "string" && ENTITY_TYPES.includes(value as EntityType);
+}
+
+function userRuleKey(rule: Pick<UserRule, "source" | "type">): string {
+  return `${rule.source}|${rule.type}`;
+}
+
+function createUserRule(source: string, type: EntityType): UserRule {
+  return {
+    source,
+    type,
+    matchMode: "exact",
+    caseSensitive: true,
+  };
+}
+
+function dedupeUserRules(rules: UserRule[]): UserRule[] {
+  const byKey = new Map<string, UserRule>();
+  rules.forEach((rule) => {
+    byKey.set(userRuleKey(rule), {
+      source: rule.source,
+      type: rule.type,
+      matchMode: "exact",
+      caseSensitive: true,
+    });
+  });
+  return Array.from(byKey.values());
+}
+
+function findOccurrences(text: string, source: string): Array<{ start: number; end: number }> {
+  if (!source) return [];
+
+  const matches: Array<{ start: number; end: number }> = [];
+  let searchFrom = 0;
+
+  while (true) {
+    const start = text.indexOf(source, searchFrom);
+    if (start === -1) break;
+    const end = start + source.length;
+    matches.push({ start, end });
+    searchFrom = end;
+  }
+
+  return matches;
+}
+
+function buildManualEntitiesFromRules(text: string, rules: UserRule[]): DetectorMatch[] {
+  const entities: DetectorMatch[] = [];
+  const uniqueRules = dedupeUserRules(rules);
+
+  uniqueRules.forEach((rule) => {
+    const occurrences = findOccurrences(text, rule.source);
+    occurrences.forEach((occurrence) => {
+      entities.push({
+        entityId: `MANUAL_${rule.type}_${occurrence.start}_${occurrence.end}`,
+        type: rule.type,
+        start: occurrence.start,
+        end: occurrence.end,
+        source: rule.source,
+        ruleId: "manual.selection",
+        confidence: 1,
+        confidenceBasis: "user-selection",
+        detectorSource: "universal",
+        priority: 1000,
+      });
+    });
+  });
+
+  return entities;
 }
 
 function nextReplacement(type: EntityType, idx: number, mode: ReplaceMode): string {
@@ -197,24 +283,6 @@ function getSelectionOffsets(container: HTMLElement): { start: number; end: numb
   return { start: Math.min(start, end), end: Math.max(start, end) };
 }
 
-function buildMappings(entities: DetectorMatch[], disabled: Set<string>): MappingRecord[] {
-  return entities
-    .filter((entity) => !disabled.has(getEntityId(entity)))
-    .map((entity) => ({
-      entityId: getEntityId(entity),
-      type: entity.type,
-      region: entity.region,
-      source: entity.source,
-      replacement: entity.replacement ?? entity.source,
-      ruleId: entity.ruleId,
-      confidence: entity.confidence,
-      position: {
-        start: entity.start,
-        end: entity.end,
-      },
-    }));
-}
-
 function renderInteractivePreview(
   text: string,
   entities: AnalyzeResult["entities"],
@@ -335,7 +403,7 @@ export default function Home() {
   const outputEditorRef = useRef<HTMLDivElement | null>(null);
   const [input, setInput] = useState(defaultInput);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
-  const [manualEntities, setManualEntities] = useState<DetectorMatch[]>([]);
+  const [userRules, setUserRules] = useState<UserRule[]>([]);
   const replaceMode: ReplaceMode = "tag";
   const enabledRegions: RegionCode[] = ["RU", "AM", "EU"];
   const [filterType, setFilterType] = useState("ALL");
@@ -348,13 +416,14 @@ export default function Home() {
   const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number } | null>(null);
   const [activePanel, setActivePanel] = useState<"input" | "output">("input");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const [importedMappings, setImportedMappings] = useState<MappingRecord[]>([]);
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
   const importFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
-    setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
@@ -365,6 +434,8 @@ export default function Home() {
     const timer = setTimeout(() => setStatusMessage(""), 3000);
     return () => clearTimeout(timer);
   }, [statusMessage]);
+
+  const manualEntities = useMemo(() => buildManualEntitiesFromRules(input, userRules), [input, userRules]);
 
   const combinedEntities = useMemo(() => {
     const base = result?.entities ?? [];
@@ -395,7 +466,7 @@ export default function Home() {
           x: rect.left + rect.width / 2,
           y: rect.top - 40,
         });
-      } catch (err) {
+      } catch {
         setSelectionPopup(null);
       }
     };
@@ -442,6 +513,14 @@ export default function Home() {
     };
   }, []);
 
+  function runAnalyze(text: string): AnalyzeResult {
+    return analyzeText({
+      text,
+      replaceMode,
+      enabledRegions,
+    });
+  }
+
   function handleAnalyze() {
     setErrorMessage("");
     setStatusMessage("");
@@ -457,24 +536,11 @@ export default function Home() {
     }
 
     startTransition(() => {
-      const analyzed = analyzeText({
-        text: input,
-        replaceMode,
-        enabledRegions,
-      });
+      const analyzed = runAnalyze(input);
       setDisabledEntityIds(new Set());
-      setManualEntities([]);
       setResult(analyzed);
       if (isMobile) setActivePanel("output");
     });
-  }
-
-  function handleInputEdit(event: React.FormEvent<HTMLDivElement>) {
-    const text = event.currentTarget.innerText;
-    setInput(text);
-    setResult(null);
-    setManualEntities([]);
-    setDisabledEntityIds(new Set());
   }
 
   function handleAddSelectionForReplacement() {
@@ -483,7 +549,8 @@ export default function Home() {
     
     if (!offsets) return;
 
-    let { start, end } = offsets;
+    const start = offsets.start;
+    let end = offsets.end;
     
     // Trim trailing whitespace and newlines (fix double-click issue)
     while (end > start && (input[end-1] === '\n' || input[end-1] === '\r' || input[end-1] === ' ')) {
@@ -497,46 +564,19 @@ export default function Home() {
 
     setErrorMessage("");
     setResult((prev) => prev || { originalText: input, anonymizedText: input, entities: [], mappings: [] });
-
-    setManualEntities((prev) => {
-      const newEntities: DetectorMatch[] = [];
-      let cursor = 0;
-      
-      while (true) {
-        const idx = input.indexOf(source, cursor);
-        if (idx === -1) break;
-        
-        const itemEnd = idx + source.length;
-        const id = `MANUAL_${idx}_${itemEnd}`;
-        
-        if (!prev.some((item) => getEntityId(item) === id)) {
-          newEntities.push({
-            entityId: id,
-            type: "USER",
-            start: idx,
-            end: itemEnd,
-            source,
-            ruleId: "manual.selection",
-            confidence: 1,
-            confidenceBasis: "user-selection",
-            detectorSource: "universal",
-            priority: 1000,
-          });
-        }
-        
-        cursor = itemEnd;
-      }
-      
-      return [...prev, ...newEntities];
-    });
+    setUserRules((prev) => dedupeUserRules([...prev, createUserRule(source, "USER")]));
     
     window.getSelection()?.removeAllRanges();
   }
 
   function handleChangeManualEntityType(entityId: string, entityType: EntityType) {
-    setManualEntities((prev) =>
-      prev.map((entity) => (getEntityId(entity) !== entityId ? entity : { ...entity, type: entityType, replacement: undefined })),
-    );
+    const target = combinedEntities.find((entity) => getEntityId(entity) === entityId);
+    if (!target || target.ruleId !== "manual.selection") return;
+
+    setUserRules((prev) => {
+      const withoutOld = prev.filter((rule) => !(rule.source === target.source && rule.type === target.type));
+      return dedupeUserRules([...withoutOld, createUserRule(target.source, entityType)]);
+    });
   }
 
   function handleCopyOutput() {
@@ -547,144 +587,78 @@ export default function Home() {
     );
   }
 
-  function handleExportMapping() {
-    const byReplacement = new Map<string, MappingRecord>();
-    // Start with imported as base (preserve their enabled state)
-    importedMappings.forEach((m) => byReplacement.set(m.replacement, m));
-    // Overwrite with ALL current entities (enabled AND disabled)
-    combinedEntities.forEach((e) => {
-      const id = e.entityId ?? `${e.type}_${e.start}_${e.end}`;
-      if (!e.replacement) return;
-      const isEnabled = !disabledEntityIds.has(id);
-      const existing = byReplacement.get(e.replacement);
-      byReplacement.set(e.replacement, {
-        entityId: id,
-        type: e.type,
-        region: e.region,
-        source: e.source,
-        replacement: e.replacement,
-        ruleId: e.ruleId,
-        confidence: e.confidence,
-        position: { start: e.start, end: e.end },
-        // enabled = true if ANY occurrence of this replacement is active
-        enabled: existing?.enabled === true || isEnabled,
-      });
-    });
-    if (byReplacement.size === 0) return;
-    const json = mappingToJson(Array.from(byReplacement.values()), { includeSourceValues: true });
-    downloadTextFile("lastik-mapping.json", json);
-    setStatusMessage(`Exported ${byReplacement.size} ${byReplacement.size === 1 ? "entry" : "entries"}.`);
+  function handleExportUserRules() {
+    const rules = dedupeUserRules(userRules);
+    if (rules.length === 0) return;
+
+    const json = userRulesToJson(rules);
+    downloadTextFile("lastik-user-rules.json", json);
+    setStatusMessage(`Exported ${rules.length} ${rules.length === 1 ? "rule" : "rules"}.`);
   }
 
-  async function handleImportMapping(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleImportUserRules(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
+
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text);
-      if (parsed.schemaVersion !== "1.0" || !Array.isArray(parsed.items)) {
-        setErrorMessage("Invalid mapping file format.");
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+
+      if (
+        parsed.schemaVersion !== "1.0" ||
+        parsed.kind !== "user-rules" ||
+        !Array.isArray(parsed.rules)
+      ) {
+        setErrorMessage("Invalid user-rules file format.");
         return;
       }
-      const loaded: MappingRecord[] = parsed.items.map((item: Record<string, unknown>) => ({
-        entityId: String(item.entityId),
-        type: item.type as EntityType,
-        region: item.region ? String(item.region) : undefined,
-        source: String(item.source),
-        replacement: String(item.replacement),
-        enabled: item.enabled !== false,
-        ruleId: String(item.ruleId),
-        confidence: parseFloat(String(item.confidence)),
-        position: { start: parseInt(String(item.start)), end: parseInt(String(item.end)) },
-      }));
-      // Keep importedMappings for export deduplication
-      setImportedMappings((prev) => {
-        const byReplacement = new Map(prev.map((m) => [m.replacement, m]));
-        loaded.forEach((m) => byReplacement.set(m.replacement, m));
-        return Array.from(byReplacement.values());
+
+      const loadedRules: UserRule[] = [];
+      parsed.rules.forEach((rawRule) => {
+        if (!rawRule || typeof rawRule !== "object") {
+          throw new Error("invalid-rule");
+        }
+        const source = String((rawRule as Record<string, unknown>).source ?? "");
+        const type = (rawRule as Record<string, unknown>).type;
+
+        if (!source || !source.trim() || !isEntityType(type)) {
+          throw new Error("invalid-rule");
+        }
+
+        loadedRules.push(createUserRule(source, type));
       });
 
-      // Apply to current text: search for each source string, create entities at real positions
+      const mergedRules = dedupeUserRules([...userRules, ...loadedRules]);
+      setUserRules(mergedRules);
+      setDisabledEntityIds(new Set());
+
       if (input.trim()) {
-        const foundEntities: DetectorMatch[] = [];
-        // Deduplicate by source (same source → same replacement from mapping)
-        const uniqueBySource = new Map<string, MappingRecord>();
-        loaded.forEach((m) => uniqueBySource.set(m.source, m));
-
-        let foundSourcesCount = 0;
-        uniqueBySource.forEach((mapping) => {
-          let searchFrom = 0;
-          let foundOnce = false;
-          while (true) {
-            const pos = input.indexOf(mapping.source, searchFrom);
-            if (pos === -1) break;
-            foundOnce = true;
-            const end = pos + mapping.source.length;
-            foundEntities.push({
-              entityId: `imported_${mapping.type}_${pos}_${end}`,
-              type: mapping.type,
-              start: pos,
-              end,
-              source: mapping.source,
-              replacement: mapping.replacement,
-              ruleId: mapping.ruleId,
-              region: mapping.region,
-              confidence: mapping.confidence,
-              confidenceBasis: "imported-mapping",
-              detectorSource: "universal",
-              priority: 100,
-            });
-            searchFrom = end;
-          }
-          if (foundOnce) foundSourcesCount++;
+        startTransition(() => {
+          setResult(runAnalyze(input));
+          if (isMobile) setActivePanel("output");
         });
-        const notFoundCount = uniqueBySource.size - foundSourcesCount;
-
-        // Restore disabled state: if a replacement was disabled in the file, disable all its matches
-        const disabledReplacements = new Set<string>(
-          loaded.filter((m) => m.enabled === false).map((m) => m.replacement)
-        );
-        const toDisable = new Set<string>(
-          foundEntities
-            .filter((e) => disabledReplacements.has(e.replacement ?? ""))
-            .map((e) => e.entityId!)
-        );
-
-        // Use mergeEntities to get the actual count after overlap resolution (matches Detections badge)
-        const resolvedCount = mergeEntities([], foundEntities).length;
-        setManualEntities(foundEntities);
-        setDisabledEntityIds(toDisable);
-        setResult({
-          originalText: input,
-          anonymizedText: input,
-          entities: [],
-          mappings: [],
-        });
+        const foundCount = buildManualEntitiesFromRules(input, mergedRules).length;
         setStatusMessage(
-          resolvedCount > 0
-            ? `Loaded ${loaded.length} rules. Found ${resolvedCount} matches.${notFoundCount > 0 ? ` Not found: ${notFoundCount}.` : ""}`
-            : `Loaded ${loaded.length} rules. Not found in current text.`
+          foundCount > 0
+            ? `Loaded ${loadedRules.length} rules. Found ${foundCount} matches.`
+            : `Loaded ${loadedRules.length} rules. Not found in current text.`
         );
       } else {
-        setStatusMessage(`Loaded ${loaded.length} rules. Paste text to apply.`);
+        setStatusMessage(`Loaded ${loadedRules.length} rules. Paste text to apply.`);
       }
     } catch {
-      setErrorMessage("Could not read mapping file.");
+      setErrorMessage("Invalid user-rules file format.");
     }
   }
 
   function handleClear() {
     setInput("");
     setResult(null);
-    setManualEntities([]);
+    setUserRules([]);
     setDisabledEntityIds(new Set());
     setErrorMessage("");
     setStatusMessage("Workspace cleared.");
-  }
-
-  function removeSingleEntity(entityId: string) {
-    setManualEntities((prev) => prev.filter((e) => getEntityId(e) !== entityId));
   }
 
   function toggleEntity(entityId: string) {
@@ -695,7 +669,7 @@ export default function Home() {
     const isManual = targetEntity.ruleId === "manual.selection";
 
     if (isManual) {
-      setManualEntities((prev) => prev.filter((e) => e.source !== targetSource));
+      setUserRules((prev) => prev.filter((rule) => !(rule.source === targetSource && rule.type === targetEntity.type)));
     } else {
       setDisabledEntityIds((prev) => {
         const next = new Set(prev);
@@ -998,10 +972,9 @@ export default function Home() {
                         if (text) {
                           setInput(text);
                           setResult(null);
-                          setManualEntities([]);
                           setDisabledEntityIds(new Set());
                         }
-                      } catch (err) {
+                      } catch {
                         setErrorMessage("Clipboard access denied.");
                       }
                     }}
@@ -1026,7 +999,6 @@ export default function Home() {
                 onChange={(e) => {
                   setInput(e.target.value);
                   setResult(null);
-                  setManualEntities([]);
                   setDisabledEntityIds(new Set());
                 }}
                 className="flex-1 resize-none overflow-auto bg-white p-8 font-mono text-sm leading-7 focus:outline-none selection:bg-(--accent)/20 custom-scrollbar border-none"
@@ -1042,20 +1014,20 @@ export default function Home() {
                   <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">INTERACTIVE</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {/* Export mapping */}
+                  {/* Export user rules */}
                   <button
-                    onClick={handleExportMapping}
-                    disabled={!result && importedMappings.length === 0}
+                    onClick={handleExportUserRules}
+                    disabled={userRules.length === 0}
                     className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Download mapping as JSON"
+                    title="Download user rules as JSON"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
                   </button>
-                  {/* Import mapping */}
+                  {/* Import user rules */}
                   <button
                     onClick={() => importFileRef.current?.click()}
                     className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                    title="Load mapping from JSON file"
+                    title="Load user rules from JSON file"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                   </button>
@@ -1087,7 +1059,7 @@ export default function Home() {
         type="file"
         accept=".json"
         className="hidden"
-        onChange={handleImportMapping}
+        onChange={handleImportUserRules}
       />
 
       {statusMessage && !errorMessage && (

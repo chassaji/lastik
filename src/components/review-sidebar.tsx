@@ -115,8 +115,7 @@ export function ReviewSidebar({
                     <select
                       className="rounded-lg border border-(--border) bg-white px-1.5 py-1 text-xs font-medium focus:outline-none"
                       value={first.type}
-                      onChange={(event) => onToggleEntity(group.items[0].entityId!)}
-                      onInput={(event) => {
+                      onChange={(event) => {
                         const newType = (event.target as HTMLSelectElement).value as EntityType;
                         group.items.forEach(item => onChangeEntityType(item.entityId!, newType));
                       }}
@@ -186,7 +185,7 @@ export function ReviewSidebar({
                           type="button"
                           onClick={() => onToggleEntityLocal(id)}
                           className="flex h-4 w-4 items-center justify-center rounded text-(--text-tertiary) hover:bg-rose-50 hover:text-rose-500 transition-colors"
-                          title="Remove this specific instance"
+                          title={isDisabled ? "Enable this specific instance" : "Disable this specific instance"}
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/></svg>
                         </button>

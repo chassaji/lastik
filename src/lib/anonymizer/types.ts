@@ -63,6 +63,13 @@ export interface MappingRecord {
   enabled?: boolean;
 }
 
+export interface UserRule {
+  source: string;
+  type: EntityType;
+  matchMode: "exact";
+  caseSensitive: true;
+}
+
 export interface AnalyzeOptions {
   text: string;
   replaceMode: ReplaceMode;
