@@ -330,6 +330,14 @@ function renderInteractivePreview(
 
     const isFlashing = flashEntityId === id;
 
+    const handleMarkClick = () => {
+      if (isManual) {
+        onToggleLocal(id);
+        return;
+      }
+      onToggle(id);
+    };
+
     parts.push(
       <mark
         key={`entity-${id}-${index}`}
@@ -337,11 +345,11 @@ function renderInteractivePreview(
         data-entity-id={id}
         role="button"
         tabIndex={0}
-        onClick={() => onToggle(id)}
+        onClick={handleMarkClick}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            onToggle(id);
+            handleMarkClick();
           }
         }}
         className={`${isDisabled ? "bg-(--highlight-disabled) text-zinc-400" : "bg-(--highlight-active) text-foreground"} ${
@@ -358,22 +366,28 @@ function renderInteractivePreview(
               }
             : undefined
         }
-        title={isDisabled ? "Masking disabled (click to enable)" : "Masking enabled (click to disable)"}
+        title={
+          isManual
+            ? isDisabled
+              ? "This manual mask is disabled (click to enable this specific instance)"
+              : "This manual mask is enabled (click to disable this specific instance)"
+            : isDisabled
+              ? "Masking disabled (click to enable)"
+              : "Masking enabled (click to disable)"
+        }
       >
         {displayedContent}
-        {isManual && count > 1 && (
+        {isManual && count > 1 && !isDisabled && (
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onToggleLocal(id);
+              onToggle(id);
             }}
-            className={`absolute -top-2 -right-2 flex h-3.5 w-3.5 items-center justify-center rounded-[2px] shadow-md transition-all z-10 ${
-              isDisabled ? "bg-(--accent) text-white" : "bg-white text-rose-300 hover:text-rose-400"
-            }`}
-            title={isDisabled ? "Enable this specific mask" : "Disable this specific mask"}
+            className="absolute -top-2 -right-2 flex h-3.5 w-3.5 items-center justify-center rounded-[2px] shadow-md transition-all z-10 bg-white text-rose-300 hover:text-rose-400"
+            title="Remove this user rule"
           >
             <svg width="6" height="6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
-              {isDisabled ? <path d="M12 5v14M5 12h14" /> : <path d="M5 12h14" />}
+              <path d="M5 12h14" />
             </svg>
           </button>
         )}
