@@ -5,6 +5,7 @@ interface ReviewSidebarProps {
   disabledEntityIds: Set<string>;
   onToggleEntity: (entityId: string) => void;
   onToggleEntityLocal: (entityId: string) => void;
+  onSelectEntity: (entityId: string) => void;
   filterType: string;
   onFilterTypeChange: (value: string) => void;
   filterRegion: string;
@@ -17,6 +18,7 @@ export function ReviewSidebar({
   disabledEntityIds,
   onToggleEntity,
   onToggleEntityLocal,
+  onSelectEntity,
   filterType,
   onFilterTypeChange,
   filterRegion,
@@ -163,6 +165,15 @@ export function ReviewSidebar({
                   return (
                     <div
                       key={id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onSelectEntity(id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelectEntity(id);
+                        }
+                      }}
                       className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 transition-colors ${
                         isDisabled ? "bg-transparent opacity-50" : "hover:bg-(--surface-muted)"
                       }`}
@@ -183,11 +194,27 @@ export function ReviewSidebar({
                       {group.items.length > 1 && (
                         <button
                           type="button"
-                          onClick={() => onToggleEntityLocal(id)}
-                          className="flex h-4 w-4 items-center justify-center rounded text-(--text-tertiary) hover:bg-rose-50 hover:text-rose-500 transition-colors"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleEntityLocal(id);
+                          }}
+                          className={`flex h-4 w-4 items-center justify-center rounded transition-colors ${
+                            isDisabled
+                              ? "text-(--accent) hover:bg-(--accent-muted) hover:text-(--accent)"
+                              : "text-(--text-tertiary) hover:bg-rose-50 hover:text-rose-500"
+                          }`}
                           title={isDisabled ? "Enable this specific instance" : "Disable this specific instance"}
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/></svg>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            {isDisabled ? (
+                              <>
+                                <path d="M12 5v14" />
+                                <path d="M5 12h14" />
+                              </>
+                            ) : (
+                              <path d="M5 12h14" />
+                            )}
+                          </svg>
                         </button>
                       )}
                     </div>
