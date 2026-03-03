@@ -3,11 +3,12 @@
 import { ReviewSidebar } from "@/components/review-sidebar";
 import { defaultInput } from "@/lib/anonymizer/default-text";
 import { analyzeText } from "@/lib/anonymizer/engine";
-import { downloadTextFile, userRulesToJson } from "@/lib/anonymizer/export";
+import { downloadTextFile, parseRulesJson, rulesToJson } from "@/lib/anonymizer/export";
 import type {
   AnalyzeResult,
   DetectorMatch,
   EntityType,
+  MappingRecord,
   RegionCode,
   ReplaceMode,
   UserRule,
@@ -18,6 +19,24 @@ const ENTITY_JUMP_FLASH_MS = 3000;
 const DESKTOP_SELECTION_POPUP_OFFSET = 44;
 const SELECTION_POPUP_MARGIN = 12;
 const SELECTION_POPUP_HALF_WIDTH = 96;
+
+type ViewDirection = "forward" | "reverse";
+type ResultMode = "analysis" | "imported";
+
+interface ExportableRuleEntry {
+  entityType: EntityType;
+  origin: "system" | "user";
+  source: string;
+  replacement: string;
+  region?: RegionCode;
+  ruleId?: string;
+}
+
+interface ImportApplySummary {
+  result: AnalyzeResult;
+  appliedCount: number;
+  skippedCount: number;
+}
 
 
 function getEntityId(entity: AnalyzeResult["entities"][number]): string {
@@ -433,15 +452,119 @@ function buildOutputText(
   return output;
 }
 
+function collectExportRules(entities: DetectorMatch[], reversePairs: boolean): ExportableRuleEntry[] {
+  const seen = new Set<string>();
+  const rules: ExportableRuleEntry[] = [];
+
+  entities.forEach((entity) => {
+    const rawSource = reversePairs ? entity.replacement : entity.source;
+    const rawReplacement = reversePairs ? entity.source : entity.replacement;
+    const replacement = rawReplacement?.trim();
+    const source = rawSource?.trim();
+    if (!replacement || !source) return;
+
+    const origin: "system" | "user" = entity.ruleId === "manual.selection" ? "user" : "system";
+    const key = [
+      entity.type,
+      origin,
+      source,
+      replacement,
+      entity.region ?? "",
+      entity.ruleId ?? "",
+    ].join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    rules.push({
+      entityType: entity.type,
+      origin,
+      source,
+      replacement,
+      region: entity.region,
+      ruleId: entity.ruleId,
+    });
+  });
+
+  rules.sort((a, b) => {
+    if (a.entityType !== b.entityType) return a.entityType.localeCompare(b.entityType);
+    if (a.origin !== b.origin) return a.origin.localeCompare(b.origin);
+    if (a.source !== b.source) return a.source.localeCompare(b.source);
+    return a.replacement.localeCompare(b.replacement);
+  });
+  return rules;
+}
+
+function applyImportedRules(text: string, rules: ExportableRuleEntry[], direction: ViewDirection): ImportApplySummary {
+  const matches: DetectorMatch[] = [];
+  let entitySeq = 1;
+  let matchedRules = 0;
+
+  rules.forEach((rule) => {
+    const from = direction === "forward" ? rule.source : rule.replacement;
+    const to = direction === "forward" ? rule.replacement : rule.source;
+    if (!from || !to || from === to) return;
+
+    const occurrences = findOccurrences(text, from);
+    if (occurrences.length === 0) return;
+    matchedRules += 1;
+
+    const basePriority = from.length * 100 + (rule.origin === "user" ? 1 : 0);
+    occurrences.forEach((occurrence) => {
+      matches.push({
+        entityId: `IMPORTED_${entitySeq++}`,
+        type: rule.entityType,
+        start: occurrence.start,
+        end: occurrence.end,
+        source: from,
+        replacement: to,
+        ruleId: rule.ruleId ?? `imported.${rule.origin}`,
+        region: rule.region,
+        confidence: 1,
+        confidenceBasis: "imported-rules",
+        detectorSource: rule.region ? "regional" : "universal",
+        priority: basePriority,
+      });
+    });
+  });
+
+  const resolved = mergeEntities(matches, []);
+  const mappings: MappingRecord[] = resolved.map((entity) => ({
+    entityId: entity.entityId ?? "",
+    type: entity.type,
+    region: entity.region,
+    source: entity.source,
+    replacement: entity.replacement ?? "",
+    ruleId: entity.ruleId,
+    confidence: entity.confidence,
+    position: {
+      start: entity.start,
+      end: entity.end,
+    },
+  }));
+
+  return {
+    result: {
+      originalText: text,
+      anonymizedText: buildOutputText(text, resolved, new Set()),
+      entities: resolved,
+      mappings,
+    },
+    appliedCount: resolved.length,
+    skippedCount: Math.max(0, rules.length - matchedRules),
+  };
+}
+
 
 export default function Home() {
-  const inputEditorRef = useRef<HTMLTextAreaElement | null>(null);
-  const outputEditorRef = useRef<HTMLDivElement | null>(null);
+  const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const previewEditorRef = useRef<HTMLDivElement | null>(null);
   const flashTimeoutRef = useRef<number | null>(null);
-  const scrollSyncOwnerRef = useRef<"input" | "output" | null>(null);
+  const scrollSyncOwnerRef = useRef<"text" | "preview" | null>(null);
   const scrollSyncReleaseRef = useRef<number | null>(null);
   const [input, setInput] = useState(defaultInput);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
+  const [resultMode, setResultMode] = useState<ResultMode>("analysis");
+  const [viewDirection, setViewDirection] = useState<ViewDirection>("forward");
+  const [importDirection, setImportDirection] = useState<ViewDirection | null>(null);
   const [userRules, setUserRules] = useState<UserRule[]>([]);
   const replaceMode: ReplaceMode = "tag";
   const enabledRegions: RegionCode[] = ["RU", "AM", "EU"];
@@ -461,6 +584,9 @@ export default function Home() {
     return window.matchMedia("(max-width: 767px)").matches;
   });
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const isForwardDirection = viewDirection === "forward";
+  const editablePanelId: "input" | "output" = isForwardDirection ? "input" : "output";
+  const previewPanelId: "input" | "output" = isForwardDirection ? "output" : "input";
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -487,33 +613,36 @@ export default function Home() {
   }, []);
 
   useLayoutEffect(() => {
-    const inputEl = inputEditorRef.current;
-    const outputEl = outputEditorRef.current;
-    if (!inputEl || !outputEl) return;
+    const textEl = textEditorRef.current;
+    const previewEl = previewEditorRef.current;
+    if (!textEl || !previewEl) return;
     if (!result) return;
 
-    scrollSyncOwnerRef.current = "input";
-    outputEl.scrollTop = inputEl.scrollTop;
-    outputEl.scrollLeft = inputEl.scrollLeft;
+    scrollSyncOwnerRef.current = "text";
+    previewEl.scrollTop = textEl.scrollTop;
+    previewEl.scrollLeft = textEl.scrollLeft;
 
     if (scrollSyncReleaseRef.current !== null) {
       window.cancelAnimationFrame(scrollSyncReleaseRef.current);
     }
     scrollSyncReleaseRef.current = window.requestAnimationFrame(() => {
-      if (scrollSyncOwnerRef.current === "input") {
+      if (scrollSyncOwnerRef.current === "text") {
         scrollSyncOwnerRef.current = null;
       }
       scrollSyncReleaseRef.current = null;
     });
-  }, [result]);
+  }, [result, viewDirection]);
 
   const manualEntities = useMemo(() => buildManualEntitiesFromRules(input, userRules), [input, userRules]);
 
   const combinedEntities = useMemo(() => {
     const base = result?.entities ?? [];
+    if (resultMode === "imported") {
+      return mergeEntities(base, []);
+    }
     const merged = mergeEntities(base, manualEntities);
     return withReplacements(merged, replaceMode);
-  }, [result, manualEntities, replaceMode]);
+  }, [result, resultMode, manualEntities, replaceMode]);
 
   const outputText = useMemo(() => {
     if (!result) return input || "Run analysis to see results.";
@@ -524,15 +653,15 @@ export default function Home() {
   useEffect(() => {
     const handleSelectionChange = () => {
       const selection = window.getSelection();
-      const outputContainer = outputEditorRef.current;
-      // Track selection in the Output panel (outputEditorRef)
-      if (!selection || selection.isCollapsed || !outputContainer) {
+      const previewContainer = previewEditorRef.current;
+      // Track selection in the active preview panel.
+      if (!selection || selection.isCollapsed || !previewContainer) {
         setSelectionPopup(null);
         return;
       }
 
-      const isAnchorInside = Boolean(selection.anchorNode && outputContainer.contains(selection.anchorNode));
-      const isFocusInside = Boolean(selection.focusNode && outputContainer.contains(selection.focusNode));
+      const isAnchorInside = Boolean(selection.anchorNode && previewContainer.contains(selection.anchorNode));
+      const isFocusInside = Boolean(selection.focusNode && previewContainer.contains(selection.focusNode));
 
       if (!isAnchorInside || !isFocusInside) {
         setSelectionPopup(null);
@@ -575,15 +704,15 @@ export default function Home() {
 
     document.addEventListener("selectionchange", handleSelectionChange);
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
-  }, []);
+  }, [editablePanelId]);
 
   // Sync scroll implementation
   useEffect(() => {
-    const inputEl = inputEditorRef.current;
-    const outputEl = outputEditorRef.current;
-    if (!inputEl || !outputEl) return;
+    const textEl = textEditorRef.current;
+    const previewEl = previewEditorRef.current;
+    if (!textEl || !previewEl) return;
 
-    const releaseOwnerNextFrame = (owner: "input" | "output") => {
+    const releaseOwnerNextFrame = (owner: "text" | "preview") => {
       if (scrollSyncReleaseRef.current !== null) {
         window.cancelAnimationFrame(scrollSyncReleaseRef.current);
       }
@@ -596,38 +725,38 @@ export default function Home() {
     };
 
     const handleInputScroll = () => {
-      if (scrollSyncOwnerRef.current === "output") {
+      if (scrollSyncOwnerRef.current === "preview") {
         return;
       }
-      scrollSyncOwnerRef.current = "input";
-      outputEl.scrollTop = inputEl.scrollTop;
-      outputEl.scrollLeft = inputEl.scrollLeft;
-      releaseOwnerNextFrame("input");
+      scrollSyncOwnerRef.current = "text";
+      previewEl.scrollTop = textEl.scrollTop;
+      previewEl.scrollLeft = textEl.scrollLeft;
+      releaseOwnerNextFrame("text");
     };
 
     const handleOutputScroll = () => {
-      if (scrollSyncOwnerRef.current === "input") {
+      if (scrollSyncOwnerRef.current === "text") {
         return;
       }
-      scrollSyncOwnerRef.current = "output";
-      inputEl.scrollTop = outputEl.scrollTop;
-      inputEl.scrollLeft = outputEl.scrollLeft;
-      releaseOwnerNextFrame("output");
+      scrollSyncOwnerRef.current = "preview";
+      textEl.scrollTop = previewEl.scrollTop;
+      textEl.scrollLeft = previewEl.scrollLeft;
+      releaseOwnerNextFrame("preview");
     };
 
-    inputEl.addEventListener("scroll", handleInputScroll);
-    outputEl.addEventListener("scroll", handleOutputScroll);
+    textEl.addEventListener("scroll", handleInputScroll);
+    previewEl.addEventListener("scroll", handleOutputScroll);
 
     return () => {
-      inputEl.removeEventListener("scroll", handleInputScroll);
-      outputEl.removeEventListener("scroll", handleOutputScroll);
+      textEl.removeEventListener("scroll", handleInputScroll);
+      previewEl.removeEventListener("scroll", handleOutputScroll);
       if (scrollSyncReleaseRef.current !== null) {
         window.cancelAnimationFrame(scrollSyncReleaseRef.current);
         scrollSyncReleaseRef.current = null;
       }
       scrollSyncOwnerRef.current = null;
     };
-  }, []);
+  }, [editablePanelId]);
 
   function runAnalyze(text: string): AnalyzeResult {
     return analyzeText({
@@ -643,27 +772,27 @@ export default function Home() {
 
     if (isMobile) {
       setIsMobileSidebarOpen(false);
-      setActivePanel("output");
+      setActivePanel(previewPanelId);
     }
 
-    const outputEl = outputEditorRef.current;
-    const inputEl = inputEditorRef.current;
+    const previewEl = previewEditorRef.current;
+    const textEl = textEditorRef.current;
 
-    if (outputEl) {
-      const mark = outputEl.querySelector<HTMLElement>(`[data-entity-id="${entityId}"]`);
+    if (previewEl) {
+      const mark = previewEl.querySelector<HTMLElement>(`[data-entity-id="${entityId}"]`);
       if (mark) {
-        const outputRect = outputEl.getBoundingClientRect();
+        const outputRect = previewEl.getBoundingClientRect();
         const markRect = mark.getBoundingClientRect();
         const targetTop =
-          outputEl.scrollTop +
+          previewEl.scrollTop +
           (markRect.top - outputRect.top) -
-          outputEl.clientHeight / 2 +
+          previewEl.clientHeight / 2 +
           markRect.height / 2;
         const clampedTop = Math.max(0, targetTop);
-        scrollSyncOwnerRef.current = "output";
-        outputEl.scrollTop = clampedTop;
-        if (inputEl) {
-          inputEl.scrollTop = clampedTop;
+        scrollSyncOwnerRef.current = "preview";
+        previewEl.scrollTop = clampedTop;
+        if (textEl) {
+          textEl.scrollTop = clampedTop;
         }
         if (scrollSyncReleaseRef.current !== null) {
           window.cancelAnimationFrame(scrollSyncReleaseRef.current);
@@ -703,13 +832,15 @@ export default function Home() {
       const analyzed = runAnalyze(input);
       setDisabledEntityIds(new Set());
       setResult(analyzed);
-      if (isMobile) setActivePanel("output");
+      setResultMode("analysis");
+      setImportDirection(null);
+      if (isMobile) setActivePanel(previewPanelId);
     });
   }
 
   function handleAddSelectionForReplacement() {
-    if (!outputEditorRef.current) return;
-    const offsets = getSelectionOffsets(outputEditorRef.current);
+    if (!previewEditorRef.current) return;
+    const offsets = getSelectionOffsets(previewEditorRef.current);
     
     if (!offsets) return;
 
@@ -728,6 +859,8 @@ export default function Home() {
 
     setErrorMessage("");
     setResult((prev) => prev || { originalText: input, anonymizedText: input, entities: [], mappings: [] });
+    setResultMode("analysis");
+    setImportDirection(null);
     setUserRules((prev) => dedupeUserRules([...prev, createUserRule(source, "USER")]));
     
     window.getSelection()?.removeAllRanges();
@@ -752,74 +885,105 @@ export default function Home() {
     );
   }
 
-  function handleExportUserRules() {
-    const rules = dedupeUserRules(userRules);
-    if (rules.length === 0) return;
+  function handleCopyText() {
+    navigator.clipboard.writeText(input).then(
+      () => setStatusMessage("Text copied."),
+      () => setErrorMessage("Failed to copy."),
+    );
+  }
 
-    const json = userRulesToJson(rules);
-    downloadTextFile("lastik-user-rules.json", json);
+  async function handlePasteIntoText() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setInput(text);
+        setResult(null);
+        setResultMode("analysis");
+        setImportDirection(null);
+        setDisabledEntityIds(new Set());
+      }
+    } catch {
+      setErrorMessage("Clipboard access denied.");
+    }
+  }
+
+  function handleSwapDirection() {
+    const nextDirection: ViewDirection = viewDirection === "forward" ? "reverse" : "forward";
+    setViewDirection(nextDirection);
+    setSelectionPopup(null);
+    if (isMobile) {
+      setActivePanel(nextDirection === "forward" ? "input" : "output");
+    }
+  }
+
+  function handleExportRules() {
+    const shouldReversePairs = resultMode === "imported" && importDirection === "reverse";
+    const rules = collectExportRules(combinedEntities, shouldReversePairs);
+    const json = rulesToJson(rules);
+    downloadTextFile("lastik-rules.json", json);
     setStatusMessage(`Exported ${rules.length} ${rules.length === 1 ? "rule" : "rules"}.`);
   }
 
-  async function handleImportUserRules(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleImportRules(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
 
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const parsedRules = parseRulesJson(text);
 
-      if (
-        parsed.schemaVersion !== "1.0" ||
-        parsed.kind !== "user-rules" ||
-        !Array.isArray(parsed.rules)
-      ) {
-        setErrorMessage("Invalid user-rules file format.");
-        return;
-      }
-
-      const loadedRules: UserRule[] = [];
-      parsed.rules.forEach((rawRule) => {
-        if (!rawRule || typeof rawRule !== "object") {
-          throw new Error("invalid-rule");
+      const normalizedRules: ExportableRuleEntry[] = parsedRules.map((rule) => {
+        if (!isEntityType(rule.entityType)) {
+          throw new Error("invalid-rules-file");
         }
-        const source = String((rawRule as Record<string, unknown>).source ?? "");
-        const type = (rawRule as Record<string, unknown>).type;
-
-        if (!source || !source.trim() || !isEntityType(type)) {
-          throw new Error("invalid-rule");
-        }
-
-        loadedRules.push(createUserRule(source, type));
+        return {
+          entityType: rule.entityType,
+          origin: rule.origin,
+          source: rule.source,
+          replacement: rule.replacement,
+          region: rule.region,
+          ruleId: rule.ruleId,
+        };
       });
 
-      const mergedRules = dedupeUserRules([...userRules, ...loadedRules]);
-      setUserRules(mergedRules);
-      setDisabledEntityIds(new Set());
+      const importedUserRules = dedupeUserRules(
+        normalizedRules
+          .filter((rule) => rule.origin === "user")
+          .map((rule) => createUserRule(rule.source, rule.entityType)),
+      );
 
-      if (input.trim()) {
-        startTransition(() => {
-          setResult(runAnalyze(input));
-          if (isMobile) setActivePanel("output");
-        });
-        const foundCount = buildManualEntitiesFromRules(input, mergedRules).length;
-        setStatusMessage(
-          foundCount > 0
-            ? `Loaded ${loadedRules.length} rules. Found ${foundCount} matches.`
-            : `Loaded ${loadedRules.length} rules. Not found in current text.`
-        );
-      } else {
-        setStatusMessage(`Loaded ${loadedRules.length} rules. Paste text to apply.`);
+      if (importedUserRules.length > 0) {
+        setUserRules((prev) => dedupeUserRules([...prev, ...importedUserRules]));
       }
+
+      const { result: importedResult, appliedCount, skippedCount } = applyImportedRules(
+        input,
+        normalizedRules,
+        viewDirection,
+      );
+
+      setDisabledEntityIds(new Set());
+      setResult(importedResult);
+      setResultMode("imported");
+      setImportDirection(viewDirection);
+      if (isMobile) {
+        setActivePanel(previewPanelId);
+      }
+      const directionLabel = viewDirection === "forward" ? "Forward" : "Reverse";
+      setStatusMessage(
+        `Imported ${normalizedRules.length} rules. Direction: ${directionLabel}. Applied ${appliedCount}. Skipped ${skippedCount}.`,
+      );
     } catch {
-      setErrorMessage("Invalid user-rules file format.");
+      setErrorMessage("Invalid rules file format.");
     }
   }
 
   function handleClear() {
     setInput("");
     setResult(null);
+    setResultMode("analysis");
+    setImportDirection(null);
     setUserRules([]);
     setDisabledEntityIds(new Set());
     setErrorMessage("");
@@ -864,6 +1028,17 @@ export default function Home() {
       return next;
     });
   }
+
+  const previewContent = result
+    ? renderInteractivePreview(
+        result.originalText,
+        combinedEntities,
+        disabledEntityIds,
+        toggleEntity,
+        toggleEntityLocal,
+        jumpFlashEntityId,
+      )
+    : <span className="text-(--text-tertiary)">Run analysis or import rules to see interactive preview.</span>;
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground font-sans">
@@ -1095,6 +1270,16 @@ export default function Home() {
               Editor
             </button>
             <button
+              onClick={handleSwapDirection}
+              className="flex-none flex items-center justify-center px-3 border-x border-(--border)/40 text-(--text-tertiary) hover:text-(--accent) transition-colors"
+              title="Swap panel direction"
+              aria-label="Swap panel direction"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>
+              </svg>
+            </button>
+            <button
               onClick={() => setActivePanel("output")}
               className={`flex-1 flex items-center justify-center text-xs font-semibold uppercase tracking-wider transition-colors ${
                 activePanel === "output"
@@ -1111,126 +1296,189 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 flex-1 min-h-0 h-full">
+          <div className="relative grid grid-cols-1 md:grid-cols-2 flex-1 min-h-0 h-full">
+            <div className="hidden md:flex absolute left-1/2 top-3 -translate-x-1/2 z-10">
+              <button
+                type="button"
+                onClick={handleSwapDirection}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-(--border) bg-white/95 text-(--text-tertiary) shadow-sm hover:text-(--accent) hover:border-(--accent)/40 transition-colors"
+                title="Swap panel direction"
+                aria-label="Swap panel direction"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>
+                </svg>
+              </button>
+            </div>
+
             {/* Input Panel */}
-            <div className={`flex-col border-r border-(--border) h-full overflow-hidden ${activePanel !== "input" ? "hidden md:flex" : "flex"}`}>
+            <div className={`flex-col h-full overflow-hidden ${isForwardDirection ? "md:order-1 md:border-r md:border-(--border)" : "md:order-2"} ${activePanel !== "input" ? "hidden md:flex" : "flex"}`}>
               <div className="flex-none flex items-center justify-between border-b border-(--border)/40 bg-white px-5 py-3">
                 <div className="flex items-center gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-widest text-(--text-tertiary)">Editor</h2>
-                  <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">RAW</span>
+                  <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">
+                    {editablePanelId === "input" ? "EDITABLE" : "INTERACTIVE"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleAnalyze}
-                    disabled={isPending}
-                    className="rounded-lg border border-(--accent) px-4 py-1.5 text-[13px] font-semibold text-(--accent) transition-all hover:bg-(--accent) hover:text-white active:scale-[0.98] disabled:opacity-50"
-                  >
-                    {isPending ? "Analyzing..." : "Analyze"}
-                  </button>
-                  <div className="w-px h-4 bg-(--border)" />
+                  {isForwardDirection && (
+                    <>
+                      <button
+                        onClick={handleAnalyze}
+                        disabled={isPending}
+                        className="rounded-lg border border-(--accent) px-4 py-1.5 text-[13px] font-semibold text-(--accent) transition-all hover:bg-(--accent) hover:text-white active:scale-[0.98] disabled:opacity-50"
+                      >
+                        {isPending ? "Analyzing..." : "Analyze"}
+                      </button>
+                      <div className="w-px h-4 bg-(--border)" />
+                    </>
+                  )}
                   <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => {
-                      void navigator.clipboard.writeText(input);
-                      setStatusMessage("Original text copied.");
-                    }}
-                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                    title="Copy text"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                  </button>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const text = await navigator.clipboard.readText();
-                        if (text) {
-                          setInput(text);
-                          setResult(null);
-                          setDisabledEntityIds(new Set());
-                        }
-                      } catch {
-                        setErrorMessage("Clipboard access denied.");
-                      }
-                    }}
-                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                    title="Paste"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
-                  </button>
-                  <button
-                    onClick={handleClear}
-                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-rose-600 hover:bg-rose-50 active:scale-90 transition-all"
-                    title="Clear"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                  </button>
+                  {editablePanelId === "input" ? (
+                    <>
+                      <button
+                        onClick={handleCopyText}
+                        className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                        title="Copy text"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                      </button>
+                      <button
+                        onClick={handlePasteIntoText}
+                        className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                        title="Paste"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+                      </button>
+                      <button
+                        onClick={handleClear}
+                        className="p-2 rounded-lg text-(--text-tertiary) hover:text-rose-600 hover:bg-rose-50 active:scale-90 transition-all"
+                        title="Clear"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={handleCopyOutput}
+                      className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                      title={viewDirection === "forward" ? "Copy masked result" : "Copy restored result"}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                    </button>
+                  )}
                   </div>
                 </div>
               </div>
-              <textarea
-                ref={inputEditorRef}
-                suppressHydrationWarning
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  setResult(null);
-                  setDisabledEntityIds(new Set());
-                }}
-                className="flex-1 resize-none overflow-auto bg-white p-8 font-mono text-sm leading-7 focus:outline-none selection:bg-(--accent)/20 custom-scrollbar border-none"
-                placeholder="Enter text here..."
-              />
+              {editablePanelId === "input" ? (
+                <textarea
+                  ref={textEditorRef}
+                  suppressHydrationWarning
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    setResult(null);
+                    setResultMode("analysis");
+                    setImportDirection(null);
+                    setDisabledEntityIds(new Set());
+                  }}
+                  className="flex-1 resize-none overflow-auto bg-white p-8 font-mono text-sm leading-7 focus:outline-none selection:bg-(--accent)/20 custom-scrollbar border-none"
+                  placeholder="Enter text here..."
+                />
+              ) : (
+                <div
+                  ref={previewEditorRef}
+                  className="flex-1 overflow-auto p-8 font-mono text-sm leading-7 whitespace-pre-wrap select-text selection:bg-(--accent)/20 custom-scrollbar bg-(--surface-muted)/20"
+                >
+                  {previewContent}
+                </div>
+              )}
             </div>
 
             {/* Output Panel */}
-            <div className={`flex-col bg-(--surface-muted)/20 h-full overflow-hidden ${activePanel !== "output" ? "hidden md:flex" : "flex"}`}>
+            <div className={`flex-col bg-(--surface-muted)/20 h-full overflow-hidden ${isForwardDirection ? "md:order-2" : "md:order-1 md:border-r md:border-(--border)"} ${activePanel !== "output" ? "hidden md:flex" : "flex"}`}>
               <div className="flex-none flex items-center justify-between border-b border-(--border)/40 bg-white/50 px-5 py-3">
                 <div className="flex items-center gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-widest text-(--text-tertiary)">Review & Masking</h2>
-                  <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">INTERACTIVE</span>
+                  <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">
+                    {editablePanelId === "output" ? "EDITABLE" : "INTERACTIVE"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {/* Export user rules */}
+                  {/* Export rules */}
                   <button
-                    onClick={handleExportUserRules}
-                    disabled={userRules.length === 0}
-                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Download user rules as JSON"
+                    onClick={handleExportRules}
+                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                    title="Download all rules as JSON"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
                   </button>
-                  {/* Import user rules */}
+                  {/* Import rules */}
                   <button
                     onClick={() => importFileRef.current?.click()}
                     className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                    title="Load user rules from JSON file"
+                    title="Load rules from JSON file"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                   </button>
-                  {/* Copy output */}
-                  <button
-                    onClick={handleCopyOutput}
-                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                    title="Copy anonymized result"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                  </button>
+                  {editablePanelId === "output" ? (
+                    <>
+                      <button
+                        onClick={handleCopyText}
+                        className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                        title="Copy text"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                      </button>
+                      <button
+                        onClick={handlePasteIntoText}
+                        className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                        title="Paste text"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+                      </button>
+                      <button
+                        onClick={handleClear}
+                        className="p-2 rounded-lg text-(--text-tertiary) hover:text-rose-600 hover:bg-rose-50 active:scale-90 transition-all"
+                        title="Clear"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={handleCopyOutput}
+                      className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+                      title={viewDirection === "forward" ? "Copy masked result" : "Copy restored result"}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                    </button>
+                  )}
                 </div>
               </div>
-              <div
-                ref={outputEditorRef}
-                className="flex-1 overflow-auto p-8 font-mono text-sm leading-7 whitespace-pre-wrap select-text selection:bg-(--accent)/20 custom-scrollbar"
-              >
-                {result 
-                  ? renderInteractivePreview(
-                      result.originalText,
-                      combinedEntities,
-                      disabledEntityIds,
-                      toggleEntity,
-                      toggleEntityLocal,
-                      jumpFlashEntityId,
-                    )
-                  : <span className="text-(--text-tertiary)">Run analysis to see interactive preview.</span>}
-              </div>
+              {editablePanelId === "output" ? (
+                <textarea
+                  ref={textEditorRef}
+                  suppressHydrationWarning
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    setResult(null);
+                    setResultMode("analysis");
+                    setImportDirection(null);
+                    setDisabledEntityIds(new Set());
+                  }}
+                  className="flex-1 resize-none overflow-auto bg-white p-8 font-mono text-sm leading-7 focus:outline-none selection:bg-(--accent)/20 custom-scrollbar border-none"
+                  placeholder="Enter text here..."
+                />
+              ) : (
+                <div
+                  ref={previewEditorRef}
+                  className="flex-1 overflow-auto p-8 font-mono text-sm leading-7 whitespace-pre-wrap select-text selection:bg-(--accent)/20 custom-scrollbar"
+                >
+                  {previewContent}
+                </div>
+              )}
             </div>
           </div>
         </main>
@@ -1241,7 +1489,7 @@ export default function Home() {
         type="file"
         accept=".json"
         className="hidden"
-        onChange={handleImportUserRules}
+        onChange={handleImportRules}
       />
 
       {statusMessage && !errorMessage && (
