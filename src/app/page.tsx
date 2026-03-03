@@ -15,6 +15,9 @@ import type {
 import { useMemo, useRef, useState, useTransition, useEffect, useLayoutEffect } from "react";
 
 const ENTITY_JUMP_FLASH_MS = 3000;
+const DESKTOP_SELECTION_POPUP_OFFSET = 44;
+const SELECTION_POPUP_MARGIN = 12;
+const SELECTION_POPUP_HALF_WIDTH = 96;
 
 
 function getEntityId(entity: AnalyzeResult["entities"][number]): string {
@@ -449,7 +452,7 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [isPending, startTransition] = useTransition();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number } | null>(null);
+  const [selectionPopup, setSelectionPopup] = useState<{ x: number; y: number; mobile: boolean } | null>(null);
   const [jumpFlashEntityId, setJumpFlashEntityId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<"input" | "output">("input");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -521,8 +524,17 @@ export default function Home() {
   useEffect(() => {
     const handleSelectionChange = () => {
       const selection = window.getSelection();
+      const outputContainer = outputEditorRef.current;
       // Track selection in the Output panel (outputEditorRef)
-      if (!selection || selection.isCollapsed || !outputEditorRef.current?.contains(selection.anchorNode)) {
+      if (!selection || selection.isCollapsed || !outputContainer) {
+        setSelectionPopup(null);
+        return;
+      }
+
+      const isAnchorInside = Boolean(selection.anchorNode && outputContainer.contains(selection.anchorNode));
+      const isFocusInside = Boolean(selection.focusNode && outputContainer.contains(selection.focusNode));
+
+      if (!isAnchorInside || !isFocusInside) {
         setSelectionPopup(null);
         return;
       }
@@ -530,10 +542,31 @@ export default function Home() {
       try {
         const range = selection.getRangeAt(0);
         const rect = range.getBoundingClientRect();
+        const isTouchLayout =
+          window.matchMedia("(max-width: 767px)").matches ||
+          window.matchMedia("(pointer: coarse)").matches ||
+          window.matchMedia("(hover: none)").matches;
+
+        if (isTouchLayout) {
+          setSelectionPopup({
+            x: window.innerWidth / 2,
+            y: 0,
+            mobile: true,
+          });
+          return;
+        }
+
+        const minX = SELECTION_POPUP_MARGIN + SELECTION_POPUP_HALF_WIDTH;
+        const maxX = window.innerWidth - SELECTION_POPUP_MARGIN - SELECTION_POPUP_HALF_WIDTH;
+        const x = Math.min(
+          Math.max(rect.left + rect.width / 2, minX),
+          Math.max(minX, maxX),
+        );
 
         setSelectionPopup({
-          x: rect.left + rect.width / 2,
-          y: rect.top - 40,
+          x,
+          y: Math.max(SELECTION_POPUP_MARGIN, rect.top - DESKTOP_SELECTION_POPUP_OFFSET),
+          mobile: false,
         });
       } catch {
         setSelectionPopup(null);
@@ -698,6 +731,7 @@ export default function Home() {
     setUserRules((prev) => dedupeUserRules([...prev, createUserRule(source, "USER")]));
     
     window.getSelection()?.removeAllRanges();
+    setSelectionPopup(null);
   }
 
   function handleChangeManualEntityType(entityId: string, entityType: EntityType) {
@@ -838,11 +872,18 @@ export default function Home() {
         {/* Floating Selection Popup */}
         {selectionPopup && (
           <div 
-            className="fixed z-[100] -translate-x-1/2 bg-zinc-900 text-white rounded-xl shadow-2xl animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
-            style={{ left: selectionPopup.x, top: selectionPopup.y }}
+            className={`fixed z-[100] bg-zinc-900 text-white rounded-xl shadow-2xl animate-in fade-in zoom-in-95 duration-150 overflow-hidden ${
+              selectionPopup.mobile ? "left-1/2 -translate-x-1/2" : "-translate-x-1/2"
+            }`}
+            style={
+              selectionPopup.mobile
+                ? { bottom: "max(1rem, calc(env(safe-area-inset-bottom) + 1rem))" }
+                : { left: selectionPopup.x, top: selectionPopup.y }
+            }
           >
             <button 
-              onMouseDown={(e) => {
+              type="button"
+              onPointerDown={(e) => {
                 e.preventDefault();
                 handleAddSelectionForReplacement();
               }}
