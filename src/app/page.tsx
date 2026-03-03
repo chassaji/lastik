@@ -1039,6 +1039,24 @@ export default function Home() {
         jumpFlashEntityId,
       )
     : <span className="text-(--text-tertiary)">Run analysis or import rules to see interactive preview.</span>;
+  const rulesActions = (
+    <>
+      <button
+        onClick={handleExportRules}
+        className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+        title="Download all rules as JSON"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+      </button>
+      <button
+        onClick={() => importFileRef.current?.click()}
+        className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
+        title="Load rules from JSON file"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+      </button>
+    </>
+  );
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground font-sans">
@@ -1102,11 +1120,14 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <div className="flex-none flex items-center justify-between px-5 py-3">
+              <div className="flex-none flex items-center justify-between gap-2 px-5 py-3">
                 <h2 className="text-[13px] font-semibold uppercase tracking-widest text-(--text-tertiary)">Detections</h2>
-                <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) px-2 py-0.5 rounded-full">
-                  {combinedEntities.length}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) px-2 py-0.5 rounded-full">
+                    {combinedEntities.length}
+                  </span>
+                  {rulesActions}
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
                 <ReviewSidebar
@@ -1158,6 +1179,9 @@ export default function Home() {
               <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) w-7 h-7 flex items-center justify-center rounded-full shadow-sm animate-in zoom-in duration-300">
                 {combinedEntities.length}
               </span>
+              <div className="flex flex-col items-center gap-1">
+                {rulesActions}
+              </div>
               <span className="[writing-mode:vertical-lr] rotate-180 text-xs font-semibold uppercase tracking-[0.3em]">Detections</span>
             </div>
           )}
@@ -1192,11 +1216,14 @@ export default function Home() {
                   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                 </button>
               </div>
-              <div className="flex-none p-4 border-b border-(--border)/40 flex items-center justify-between">
+              <div className="flex-none p-4 border-b border-(--border)/40 flex items-center justify-between gap-2">
                 <h2 className="text-[13px] font-semibold uppercase tracking-widest text-(--text-tertiary)">Detections</h2>
-                <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) px-2 py-0.5 rounded-full">
-                  {combinedEntities.length}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) px-2 py-0.5 rounded-full">
+                    {combinedEntities.length}
+                  </span>
+                  {rulesActions}
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                 <ReviewSidebar
@@ -1288,11 +1315,6 @@ export default function Home() {
               }`}
             >
               Review & Masking
-              {result && combinedEntities.length > 0 && (
-                <span className="ml-1.5 text-[10px] bg-(--accent-muted) text-(--accent) px-1.5 py-0.5 rounded-full">
-                  {combinedEntities.length}
-                </span>
-              )}
             </button>
           </div>
 
@@ -1314,7 +1336,10 @@ export default function Home() {
             {/* Input Panel */}
             <div className={`flex-col h-full overflow-hidden ${isForwardDirection ? "md:order-1 md:border-r md:border-(--border)" : "md:order-2"} ${activePanel !== "input" ? "hidden md:flex" : "flex"}`}>
               <div className="flex-none flex items-center justify-between border-b border-(--border)/40 bg-white px-5 py-3">
-                <div className="flex items-center gap-2">
+                <div className="flex md:hidden items-center gap-1">
+                  {rulesActions}
+                </div>
+                <div className="hidden md:flex items-center gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-widest text-(--text-tertiary)">Editor</h2>
                   <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">
                     {editablePanelId === "input" ? "EDITABLE" : "INTERACTIVE"}
@@ -1398,29 +1423,16 @@ export default function Home() {
             {/* Output Panel */}
             <div className={`flex-col bg-(--surface-muted)/20 h-full overflow-hidden ${isForwardDirection ? "md:order-2" : "md:order-1 md:border-r md:border-(--border)"} ${activePanel !== "output" ? "hidden md:flex" : "flex"}`}>
               <div className="flex-none flex items-center justify-between border-b border-(--border)/40 bg-white/50 px-5 py-3">
-                <div className="flex items-center gap-2">
+                <div className="flex md:hidden items-center gap-1">
+                  {rulesActions}
+                </div>
+                <div className="hidden md:flex items-center gap-2">
                   <h2 className="text-xs font-semibold uppercase tracking-widest text-(--text-tertiary)">Review & Masking</h2>
                   <span className="text-[11px] font-semibold text-(--text-tertiary) bg-(--surface-muted) px-2 py-0.5 rounded-md">
                     {editablePanelId === "output" ? "EDITABLE" : "INTERACTIVE"}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {/* Export rules */}
-                  <button
-                    onClick={handleExportRules}
-                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                    title="Download all rules as JSON"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-                  </button>
-                  {/* Import rules */}
-                  <button
-                    onClick={() => importFileRef.current?.click()}
-                    className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
-                    title="Load rules from JSON file"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-                  </button>
                   {editablePanelId === "output" ? (
                     <>
                       <button
