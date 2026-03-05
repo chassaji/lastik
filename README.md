@@ -2,7 +2,7 @@
 
 Lastik is a **secure, browser-only** tool designed for data de-identification within text documents. Built with privacy as a core principle, Lastik ensures that sensitive information never leaves your machine.
 
-**[Try Lastik Online](https://chassaji.github.io/lastik/)**
+**[Try Lastik Online](https://lastik.chassaji.com/)**
 
 ---
 

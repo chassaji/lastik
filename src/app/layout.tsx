@@ -20,9 +20,66 @@ const spaceGrotesk = Space_Grotesk({
   weight: ["500", "600", "700"],
 });
 
+const DEFAULT_SITE_URL = "https://lastik.chassaji.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? DEFAULT_SITE_URL;
+const normalizedSiteUrl = SITE_URL.endsWith("/") ? SITE_URL.slice(0, -1) : SITE_URL;
+const canonicalUrl = `${normalizedSiteUrl}/`;
+const ogImageUrl = `${normalizedSiteUrl}/favicon.svg`;
+
 export const metadata: Metadata = {
-  title: "Lastik — Data De-identification Tool",
+  metadataBase: new URL(canonicalUrl),
+  title: {
+    default: "Lastik — Data De-identification Tool",
+    template: "%s | Lastik",
+  },
+  applicationName: "Lastik",
   description: "Secure, browser-only data de-identification for sensitive text",
+  keywords: [
+    "data de-identification",
+    "PII masking",
+    "text anonymization",
+    "GDPR pseudonymization",
+    "privacy by design",
+    "local processing",
+  ],
+  alternates: {
+    canonical: canonicalUrl,
+    languages: {
+      "en-US": canonicalUrl,
+    },
+  },
+  openGraph: {
+    type: "website",
+    url: canonicalUrl,
+    siteName: "Lastik",
+    title: "Lastik — Data De-identification Tool",
+    description: "Secure, browser-only data de-identification for sensitive text",
+    locale: "en_US",
+    images: [
+      {
+        url: ogImageUrl,
+        alt: "Lastik",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Lastik — Data De-identification Tool",
+    description: "Secure, browser-only data de-identification for sensitive text",
+    images: [ogImageUrl],
+    creator: "@chassaji",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   icons: {
     icon: [
       { url: "/favicon.svg", type: "image/svg+xml" },
