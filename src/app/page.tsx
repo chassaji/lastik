@@ -22,6 +22,7 @@ const SELECTION_POPUP_HALF_WIDTH = 96;
 
 type ViewDirection = "forward" | "reverse";
 type ResultMode = "analysis" | "imported";
+type TourTargetId = "editor-input" | "swap-direction" | "analyze-action" | "detections-entry" | "output-copy";
 
 interface ExportableRuleEntry {
   entityType: EntityType;
@@ -38,9 +39,62 @@ interface ImportApplySummary {
   skippedCount: number;
 }
 
+interface OnboardingStep {
+  id: string;
+  targetId: TourTargetId;
+  title: string;
+  description: string;
+}
+
+const ONBOARDING_STORAGE_KEY = "lastik.onboarding.seen.v1";
+const ONBOARDING_STEPS: OnboardingStep[] = [
+  {
+    id: "paste",
+    targetId: "editor-input",
+    title: "Step 1: Paste your text",
+    description: "Start by inserting the source text you want to mask in the editor panel.",
+  },
+  {
+    id: "direction",
+    targetId: "swap-direction",
+    title: "Step 2: Choose workflow direction",
+    description: "Use this switch to toggle between forward masking and reverse restore view.",
+  },
+  {
+    id: "analyze",
+    targetId: "analyze-action",
+    title: "Step 3: Run analysis",
+    description: "Click Analyze to detect sensitive entities and generate the masked output.",
+  },
+  {
+    id: "review",
+    targetId: "detections-entry",
+    title: "Step 4: Review detections",
+    description: "Open detections to inspect results and adjust what should be masked.",
+  },
+  {
+    id: "copy",
+    targetId: "output-copy",
+    title: "Step 5: Copy result",
+    description: "Copy the masked output when the result looks correct.",
+  },
+];
+
 
 function getEntityId(entity: AnalyzeResult["entities"][number]): string {
   return entity.entityId ?? `${entity.type}_${entity.start}_${entity.end}`;
+}
+
+function getVisibleTourTarget(targetId: TourTargetId): HTMLElement | null {
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>(`[data-tour-id="${targetId}"]`));
+  return (
+    candidates.find((element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden";
+    }) ?? null
+  );
 }
 
 const ENTITY_TYPES: EntityType[] = [
@@ -586,9 +640,16 @@ export default function Home() {
     return window.matchMedia("(max-width: 767px)").matches;
   });
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(ONBOARDING_STORAGE_KEY) !== "1";
+  });
+  const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
+  const [onboardingTargetRect, setOnboardingTargetRect] = useState<DOMRect | null>(null);
   const isForwardDirection = viewDirection === "forward";
   const editablePanelId: "input" | "output" = isForwardDirection ? "input" : "output";
   const previewPanelId: "input" | "output" = isForwardDirection ? "output" : "input";
+  const onboardingStep = ONBOARDING_STEPS[onboardingStepIndex];
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -596,6 +657,39 @@ export default function Home() {
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!isOnboardingOpen || !onboardingStep) return;
+
+    const update = () => {
+      const target = getVisibleTourTarget(onboardingStep.targetId);
+      setOnboardingTargetRect(target ? target.getBoundingClientRect() : null);
+    };
+
+    let frame = window.requestAnimationFrame(update);
+
+    const schedule = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(update);
+    };
+
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+    };
+  }, [
+    isOnboardingOpen,
+    onboardingStep,
+    isMobile,
+    activePanel,
+    viewDirection,
+    isMobileSidebarOpen,
+    isSidebarCollapsed,
+  ]);
 
   useEffect(() => {
     if (!statusMessage) return;
@@ -1031,6 +1125,28 @@ export default function Home() {
     });
   }
 
+  function finishOnboarding() {
+    window.localStorage.setItem(ONBOARDING_STORAGE_KEY, "1");
+    setIsOnboardingOpen(false);
+    setOnboardingTargetRect(null);
+  }
+
+  function skipOnboarding() {
+    finishOnboarding();
+  }
+
+  function previousOnboardingStep() {
+    setOnboardingStepIndex((current) => Math.max(0, current - 1));
+  }
+
+  function nextOnboardingStep() {
+    if (onboardingStepIndex >= ONBOARDING_STEPS.length - 1) {
+      finishOnboarding();
+      return;
+    }
+    setOnboardingStepIndex((current) => current + 1);
+  }
+
   const previewContent = result
     ? renderInteractivePreview(
         result.originalText,
@@ -1122,7 +1238,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <div className="flex-none flex items-center justify-between gap-2 px-5 py-3">
+              <div data-tour-id="detections-entry" className="flex-none flex items-center justify-between gap-2 px-5 py-3">
                 <h2 className="text-[13px] font-semibold uppercase tracking-widest text-(--text-tertiary)">Detections</h2>
                 <div className="flex items-center gap-1">
                   <span className="text-xs font-semibold bg-(--accent-muted) text-(--accent) px-2 py-0.5 rounded-full">
@@ -1273,6 +1389,7 @@ export default function Home() {
           <div className="md:hidden flex border-b border-(--border)/40 bg-white flex-none items-stretch h-14">
             <button
               onClick={() => setIsMobileSidebarOpen(true)}
+              data-tour-id="detections-entry"
               className="flex-none flex items-center justify-center px-3.5 border-r border-(--border)/40 relative"
               title="Detections"
             >
@@ -1300,6 +1417,7 @@ export default function Home() {
             </button>
             <button
               onClick={handleSwapDirection}
+              data-tour-id="swap-direction"
               className="flex-none flex items-center justify-center px-3 border-x border-(--border)/40 text-(--text-tertiary) hover:text-(--accent) transition-colors"
               title="Swap panel direction"
               aria-label="Swap panel direction"
@@ -1325,6 +1443,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={handleSwapDirection}
+                data-tour-id="swap-direction"
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-(--border) bg-white/95 text-(--text-tertiary) shadow-sm hover:text-(--accent) hover:border-(--accent)/40 transition-colors"
                 title="Swap panel direction"
                 aria-label="Swap panel direction"
@@ -1352,6 +1471,7 @@ export default function Home() {
                     <>
                       <button
                         onClick={handleAnalyze}
+                        data-tour-id="analyze-action"
                         disabled={isPending}
                         className="rounded-lg border border-(--accent) px-4 py-1.5 text-[13px] font-semibold text-(--accent) transition-all hover:bg-(--accent) hover:text-white active:scale-[0.98] disabled:opacity-50"
                       >
@@ -1388,6 +1508,7 @@ export default function Home() {
                   ) : (
                     <button
                       onClick={handleCopyOutput}
+                      data-tour-id="output-copy"
                       className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
                       title={viewDirection === "forward" ? "Copy masked result" : "Copy restored result"}
                     >
@@ -1400,6 +1521,7 @@ export default function Home() {
               {editablePanelId === "input" ? (
                 <textarea
                   ref={textEditorRef}
+                  data-tour-id="editor-input"
                   suppressHydrationWarning
                   value={input}
                   onChange={(e) => {
@@ -1462,6 +1584,7 @@ export default function Home() {
                   ) : (
                     <button
                       onClick={handleCopyOutput}
+                      data-tour-id="output-copy"
                       className="p-2 rounded-lg text-(--text-tertiary) hover:text-(--accent) hover:bg-(--accent-muted) active:scale-90 transition-all"
                       title={viewDirection === "forward" ? "Copy masked result" : "Copy restored result"}
                     >
@@ -1473,6 +1596,7 @@ export default function Home() {
               {editablePanelId === "output" ? (
                 <textarea
                   ref={textEditorRef}
+                  data-tour-id="editor-input"
                   suppressHydrationWarning
                   value={input}
                   onChange={(e) => {
@@ -1505,6 +1629,61 @@ export default function Home() {
         className="hidden"
         onChange={handleImportRules}
       />
+
+      {isOnboardingOpen && onboardingStep && (
+        <>
+          <div className="fixed inset-0 z-[90] bg-slate-950/55" />
+          {onboardingTargetRect && (
+            <div
+              className="fixed z-[91] pointer-events-none rounded-xl border-2 border-(--accent) shadow-[0_0_0_9999px_rgba(15,23,42,0.18)]"
+              style={{
+                top: onboardingTargetRect.top - 6,
+                left: onboardingTargetRect.left - 6,
+                width: onboardingTargetRect.width + 12,
+                height: onboardingTargetRect.height + 12,
+              }}
+            />
+          )}
+          <div className="fixed z-[92] left-4 right-4 bottom-4 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[420px] rounded-2xl border border-(--border) bg-white p-5 shadow-2xl">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-(--text-tertiary)">
+              Quick Start · {onboardingStepIndex + 1}/{ONBOARDING_STEPS.length}
+            </p>
+            <h3 className="mt-2 text-sm font-semibold text-foreground">{onboardingStep.title}</h3>
+            <p className="mt-2 text-[13px] leading-relaxed text-(--text-secondary)">{onboardingStep.description}</p>
+            {!onboardingTargetRect && (
+              <p className="mt-2 text-[12px] text-(--text-tertiary)">
+                This control is not visible right now. Continue to the next step.
+              </p>
+            )}
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={skipOnboarding}
+                className="text-xs font-semibold text-(--text-tertiary) hover:text-foreground transition-colors"
+              >
+                Skip
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={previousOnboardingStep}
+                  disabled={onboardingStepIndex === 0}
+                  className="rounded-lg border border-(--border) px-3 py-1.5 text-xs font-semibold text-(--text-secondary) hover:border-(--accent)/40 hover:text-(--accent) disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={nextOnboardingStep}
+                  className="rounded-lg border border-(--accent) bg-(--accent) px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition-opacity"
+                >
+                  {onboardingStepIndex === ONBOARDING_STEPS.length - 1 ? "Finish" : "Next"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {statusMessage && !errorMessage && (
         <div className="fixed bottom-6 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 z-50 rounded-2xl border border-(--accent)/20 bg-(--accent-muted) px-6 py-3 text-sm font-semibold text-(--accent) shadow-2xl animate-in fade-in slide-in-from-bottom-4 text-center">
