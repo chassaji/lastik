@@ -6,9 +6,20 @@ We have received your loan application dated 12.05.2024.
 To proceed, please verify the details below:
 
 Applicant: John Smith
+First name / Last name:
+John Smith
 DOB: 20-08-1985
 Phone: +1 (555) 123-4567
 Email: john.smith@example.com
+IP: 192.168.1.1
+
+Address:
+221 Baker Street
+62704 Springfield
+
+Anschrift:
+Muster Str. 12
+10115 Berlin
 
 Payment Details:
 IBAN: DE89370400440532013000

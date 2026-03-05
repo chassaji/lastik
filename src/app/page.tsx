@@ -50,6 +50,8 @@ const ENTITY_TYPES: EntityType[] = [
   "DOC_ID",
   "EMAIL",
   "PHONE",
+  "IP",
+  "ADDRESS",
   "CARD",
   "ACCOUNT",
   "IBAN",

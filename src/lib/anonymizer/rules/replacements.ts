@@ -1,4 +1,4 @@
-import type { EntityType, RegionCode } from "@/lib/anonymizer/types";
+import type { EntityType } from "@/lib/anonymizer/types";
 import type { ReplacementTemplate } from "@/lib/anonymizer/rules/types";
 
 function syntheticDateLike(source: string, idx: number): string {
@@ -30,6 +30,8 @@ export const syntheticTemplates: Record<EntityType, ReplacementTemplate> = {
   USER: (idx) => `USER_${idx}`,
   EMAIL: (idx) => `user${idx}@example.test`,
   PHONE: (idx) => `+0000000${String(idx).padStart(4, "0")}`,
+  IP: (idx) => `10.0.0.${Math.min(254, idx)}`,
+  ADDRESS: (idx) => `ADDRESS_${idx}`,
   CARD: (idx) => `4111 **** **** ${String((1000 + idx) % 10000).padStart(4, "0")}`,
   IBAN: (idx) => `DE00TEST0000000000${String(idx).padStart(4, "0")}`,
   SWIFT_BIC: (idx) => `FAKE${String(idx).padStart(4, "0")}`,

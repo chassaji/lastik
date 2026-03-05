@@ -2,6 +2,8 @@ export type EntityType =
   | "USER"
   | "EMAIL"
   | "PHONE"
+  | "IP"
+  | "ADDRESS"
   | "CARD"
   | "IBAN"
   | "SWIFT_BIC"
