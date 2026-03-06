@@ -63,6 +63,8 @@ export function ReviewSidebar({
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2">
         <select
+          id="detections-filter-type"
+          name="filter-type"
           className="w-full rounded-xl border border-(--border) bg-(--surface-muted) px-2.5 py-2 text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-(--accent)"
           value={filterType}
           onChange={(event) => onFilterTypeChange(event.target.value)}
@@ -76,6 +78,8 @@ export function ReviewSidebar({
         </select>
 
         <select
+          id="detections-filter-region"
+          name="filter-region"
           className="w-full rounded-xl border border-(--border) bg-(--surface-muted) px-2.5 py-2 text-[13px] font-medium focus:outline-none focus:ring-1 focus:ring-(--accent)"
           value={filterRegion}
           onChange={(event) => onFilterRegionChange(event.target.value)}
@@ -115,6 +119,7 @@ export function ReviewSidebar({
                 <div className="flex items-center gap-1.5 min-w-0">
                   {isManual && !allDisabled ? (
                     <select
+                      name="manual-entity-type"
                       className="rounded-lg border border-(--border) bg-white px-1.5 py-1 text-xs font-medium focus:outline-none"
                       value={first.type}
                       onChange={(event) => {

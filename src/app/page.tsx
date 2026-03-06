@@ -37,9 +37,11 @@ const HOMEPAGE_JSON_LD = JSON.stringify({
       "@type": "SoftwareApplication",
       "@id": `${NORMALIZED_SITE_URL}/#application`,
       name: "Lastik",
-      applicationCategory: "SecurityApplication",
+      applicationCategory: "SecurityBusinessApplication",
       operatingSystem: "Web Browser",
       url: `${NORMALIZED_SITE_URL}/`,
+      codeRepository: "https://github.com/chassaji/lastik",
+      license: "https://spdx.org/licenses/MIT.html",
       isAccessibleForFree: true,
       offers: {
         "@type": "Offer",
@@ -667,15 +669,9 @@ export default function Home() {
   const [jumpFlashEntityId, setJumpFlashEntityId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<"input" | "output">("input");
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(max-width: 767px)").matches;
-  });
+  const [isMobile, setIsMobile] = useState(false);
   const importFileRef = useRef<HTMLInputElement | null>(null);
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(ONBOARDING_STORAGE_KEY) !== "1";
-  });
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const [onboardingTargetRect, setOnboardingTargetRect] = useState<DOMRect | null>(null);
   const isForwardDirection = viewDirection === "forward";
@@ -685,9 +681,20 @@ export default function Home() {
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
+    const frame = window.requestAnimationFrame(() => setIsMobile(mq.matches));
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      mq.removeEventListener("change", handler);
+    };
+  }, []);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setIsOnboardingOpen(window.localStorage.getItem(ONBOARDING_STORAGE_KEY) !== "1");
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useLayoutEffect(() => {
@@ -1265,9 +1272,9 @@ export default function Home() {
                       <rect x="58" y="40" width="4" height="30" fill="white" opacity="0.3"/>
                     </g>
                   </svg>
-                  <div className="flex flex-col leading-none gap-0.5">
+                  <div className="flex flex-col leading-none gap-1">
                     <h1 className="text-[15px] font-(family-name:--font-logo) font-semibold tracking-normal text-foreground">LASTIK</h1>
-                    <span className="text-[9px] font-bold text-(--text-tertiary) uppercase tracking-[0.2em]">De-identification</span>
+                    <span className="text-[9px] font-semibold text-(--text-tertiary) tracking-[0.08em]">Privacy for AI &amp; Data Masking</span>
                   </div>
                 </div>
               </div>
@@ -1294,28 +1301,28 @@ export default function Home() {
                   onChangeEntityType={handleChangeManualEntityType}
                 />
               </div>
-              <div className="flex-none p-5 border-t border-(--border)/40 bg-(--surface-muted)/50">
-                <div className="bg-rose-50/50 rounded-xl p-3 border border-rose-100/50">
-                  <p className="text-xs text-center text-(--error-fg) font-semibold leading-relaxed">
-                    Local Processing Only<br/>
-                    <span className="font-medium opacity-70">Data never leaves your device</span>
-                  </p>
-                </div>
-                <div className="mt-4 flex flex-col items-center gap-2">
-                  <a
-                    href="https://github.com/chassaji/lastik"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-(--text-tertiary) hover:text-(--text-secondary) transition-colors"
-                    aria-label="View on GitHub"
-                  >
-                    <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                    </svg>
-                  </a>
-                  <p className="text-xs font-semibold text-(--text-tertiary)">
-                    © 2026 chassaji
-                  </p>
+              <div className="flex-none p-3 border-t border-(--border)/40 bg-(--surface-muted)/50">
+                <div className="flex flex-col items-center gap-1.5">
+                  <div className="flex items-center gap-3 text-[11px] font-semibold text-(--text-tertiary)">
+                    <a
+                      href="https://github.com/chassaji/lastik"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-(--text-secondary) transition-colors"
+                      aria-label="View on GitHub"
+                    >
+                      GitHub
+                    </a>
+                    <span className="opacity-40">•</span>
+                    <a href="/faq" className="hover:text-(--text-secondary) transition-colors">
+                      FAQ
+                    </a>
+                    <span className="opacity-40">•</span>
+                    <a href="/privacy" className="hover:text-(--text-secondary) transition-colors">
+                      Privacy
+                    </a>
+                  </div>
+                  <p className="text-[11px] font-semibold text-(--text-tertiary)">© 2026 chassaji</p>
                 </div>
               </div>
             </div>
@@ -1355,9 +1362,9 @@ export default function Home() {
                       <rect x="58" y="40" width="4" height="30" fill="white" opacity="0.3"/>
                     </g>
                   </svg>
-                  <div className="flex flex-col leading-none gap-0.5">
+                  <div className="flex flex-col leading-none gap-1">
                     <h1 className="text-sm font-(family-name:--font-logo) font-semibold tracking-normal text-foreground">LASTIK</h1>
-                    <span className="text-[10px] font-bold text-(--text-tertiary) uppercase tracking-[0.2em]">De-identification</span>
+                    <span className="text-[10px] font-semibold text-(--text-tertiary) tracking-[0.08em]">Privacy for AI</span>
                   </div>
                 </div>
                 <button
@@ -1391,25 +1398,27 @@ export default function Home() {
                 />
               </div>
               <div className="flex-none p-3 border-t border-(--border)/40 bg-(--surface-muted)/50">
-                <div className="bg-rose-50/50 rounded-xl p-2.5 border border-rose-100/50 mb-3">
-                  <p className="text-[11px] text-center text-(--error-fg) font-semibold leading-relaxed">
-                    Local Processing Only<br/>
-                    <span className="font-medium opacity-70">Data never leaves your device</span>
-                  </p>
-                </div>
-                <div className="flex items-center justify-center gap-3">
-                  <a
-                    href="https://github.com/chassaji/lastik"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-(--text-tertiary) hover:text-(--text-secondary) transition-colors"
-                    aria-label="View on GitHub"
-                  >
-                    <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                    </svg>
-                  </a>
-                  <span className="text-[11px] font-semibold text-(--text-tertiary)">© 2026 chassaji</span>
+                <div className="flex flex-col items-center justify-center gap-1.5">
+                  <div className="flex items-center gap-3 text-[11px] font-semibold text-(--text-tertiary)">
+                    <a
+                      href="https://github.com/chassaji/lastik"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-(--text-secondary) transition-colors"
+                      aria-label="View on GitHub"
+                    >
+                      GitHub
+                    </a>
+                    <span className="opacity-40">•</span>
+                    <a href="/faq" className="hover:text-(--text-secondary) transition-colors">
+                      FAQ
+                    </a>
+                    <span className="opacity-40">•</span>
+                    <a href="/privacy" className="hover:text-(--text-secondary) transition-colors">
+                      Privacy
+                    </a>
+                  </div>
+                  <p className="text-[11px] font-semibold text-(--text-tertiary)">© 2026 chassaji</p>
                 </div>
               </div>
             </div>
@@ -1469,6 +1478,12 @@ export default function Home() {
             >
               Review & Masking
             </button>
+          </div>
+
+          <div className="flex-none border-b border-(--border)/40 bg-white/80 px-4 py-2">
+            <p className="text-center text-[11px] md:text-xs font-medium text-(--text-secondary)">
+              The safest way to sanitize your data before using ChatGPT or Gemini.
+            </p>
           </div>
 
           <div className="relative grid grid-cols-1 md:grid-cols-2 flex-1 min-h-0 h-full">
@@ -1554,6 +1569,8 @@ export default function Home() {
               {editablePanelId === "input" ? (
                 <textarea
                   ref={textEditorRef}
+                  id="editor-input-textarea"
+                  name="document-text"
                   data-tour-id="editor-input"
                   suppressHydrationWarning
                   value={input}
@@ -1629,6 +1646,8 @@ export default function Home() {
               {editablePanelId === "output" ? (
                 <textarea
                   ref={textEditorRef}
+                  id="editor-output-textarea"
+                  name="document-text"
                   data-tour-id="editor-input"
                   suppressHydrationWarning
                   value={input}
@@ -1657,6 +1676,8 @@ export default function Home() {
       
       <input
         ref={importFileRef}
+        id="rules-import-file"
+        name="rules-file"
         type="file"
         accept=".json"
         className="hidden"
