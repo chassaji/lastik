@@ -1,38 +1,51 @@
-# <img src="public/favicon.svg" width="32" height="32" align="center" /> Lastik — Data De-identification Tool
+# <img src="public/favicon.svg" width="32" height="32" align="center" /> Lastik — Data Pseudonymisation Tool
 
-Lastik is a local-first, browser-only tool for de-identifying sensitive text.  
-All processing runs on-device in your browser.
+Lastik is a local-first, browser-based tool for masking sensitive data in text before sharing it with LLMs or third parties.
 
-**Links:** [Try Online](https://lastik.chassaji.com/) · [Report a Bug](https://github.com/chassaji/lastik/issues) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+All masking logic runs in the browser runtime.
+
+**Links:** [Try Online](https://lastik.chassaji.com/) · [FAQ](https://lastik.chassaji.com/faq) · [Privacy Policy](https://lastik.chassaji.com/privacy) · [Report a Bug](https://github.com/chassaji/lastik/issues) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
+**Compliance Snapshot:** Privacy by Design · Pseudonymisation (GDPR Art. 4(5)) · Local-first processing
 
 ---
 
 ## Why Lastik
 
-Many privacy tools rely on cloud processing. Lastik is designed for a different workflow:
+Many privacy tools depend on cloud processing. Lastik is designed for local-first workflows:
 
-- No document text is sent to external APIs by anonymization logic
-- Detection runs with deterministic, auditable rules
-- Mappings are generated locally and can be exported by the user
+- No document text is sent to external APIs by masking logic
+- Detection is deterministic and rule-based
+- Mapping files are generated locally and exported only by user action
 
-## Key Features
+## Current Capabilities
 
-- 100% local processing in browser runtime
-- Rule-based detection for common PII classes
-- Regional rules for RU, AM, and EU document patterns
+- Local-first processing in browser runtime
+- Rule-based PII detection with regional patterns (RU, AM, EU)
 - Interactive split-pane editor with review sidebar
 - Global/local masking controls for detected entities
-- Forward and reverse workflows via import/exportable rules
-- Two replacement modes:
-  - Tag mode (`[PERSON_1]`, `[EMAIL_1]`, ...)
-  - Synthetic mode (`user1@example.test`, etc.)
+- Forward and reverse workflows via JSON import/export rules
+- Manual masking by text selection
+- **Tag mode only** (`[PERSON_1]`, `[EMAIL_1]`, `[DATE_1]`, ...)
 
-## Tech Stack
+## Detected PII Classes
 
-- Next.js 16 (App Router)
-- TypeScript
-- React 19
-- Tailwind CSS 4
+- Names and users (`PERSON`, `USER`)
+- Organizations (`ORG`)
+- Emails and phones (`EMAIL`, `PHONE`)
+- Network and location data (`IP`, `ADDRESS`)
+- Document identifiers (`DOC_ID`)
+- Financial identifiers (`CARD`, `ACCOUNT`, `IBAN`, `SWIFT_BIC`)
+- Dates (`DATE`)
+
+## GDPR Alignment (Technical)
+
+Lastik is a technical utility that can support privacy workflows. It is not legal advice.
+
+- **Pseudonymisation (GDPR Art. 4(5))**: Tag mode replaces values with reversible placeholders linked through local/exported mappings.
+- **Privacy by Design (GDPR Art. 25)**: Processing is performed in browser runtime without sending document text by app masking logic.
+- **Personal Data Scope (GDPR Art. 4(1))**: The tool targets common personal data fields such as names, contact details, document and financial identifiers, dates, and IP addresses.
+- **Limitation (GDPR Art. 9)**: Special categories of personal data (for example health, religion, political views) are not explicitly classified by dedicated detectors.
 
 ## Getting Started
 
@@ -57,13 +70,15 @@ npm start
 - `src/lib/anonymizer/engine.ts` — core analysis engine
 - `src/lib/anonymizer/rules/` — universal and regional detection rules
 - `src/components/review-sidebar.tsx` — review controls for detections
-- `src/app/page.tsx` — primary UI
+- `src/app/page.tsx` — main application UI
+- `src/app/faq/page.tsx` — FAQ page
+- `src/app/privacy/page.tsx` — Privacy Policy page
 
-## Security And Privacy
+## Security and Privacy
 
-- Local-only processing model: see [PRIVACY.md](PRIVACY.md)
-- Vulnerability reporting: see [SECURITY.md](SECURITY.md)
-- Contributor workflow: see [CONTRIBUTING.md](CONTRIBUTING.md)
+- Project privacy model: [PRIVACY.md](PRIVACY.md)
+- Public privacy page: [https://lastik.chassaji.com/privacy](https://lastik.chassaji.com/privacy)
+- Vulnerability reporting: [SECURITY.md](SECURITY.md)
 
 ## License
 

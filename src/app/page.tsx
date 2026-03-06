@@ -1303,6 +1303,15 @@ export default function Home() {
               </div>
               <div className="flex-none p-3 border-t border-(--border)/40 bg-(--surface-muted)/50">
                 <div className="flex flex-col items-center gap-1.5">
+                  <div className="w-full rounded-lg border border-(--accent)/25 bg-(--accent-muted)/45 px-2.5 py-1.5">
+                    <p className="text-center text-[10px] leading-tight font-medium text-(--accent-strong)">
+                      <span className="block">Privacy by Design · Local-first processing</span>
+                      <span className="mt-0.5 block">Pseudonymisation (GDPR Art. 4(5))</span>
+                    </p>
+                    <p className="mt-0.5 text-center text-[10px] font-medium text-(--text-secondary)">
+                      Safer sanitization before ChatGPT and Gemini.
+                    </p>
+                  </div>
                   <div className="flex items-center gap-3 text-[11px] font-semibold text-(--text-tertiary)">
                     <a
                       href="https://github.com/chassaji/lastik"
@@ -1399,6 +1408,15 @@ export default function Home() {
               </div>
               <div className="flex-none p-3 border-t border-(--border)/40 bg-(--surface-muted)/50">
                 <div className="flex flex-col items-center justify-center gap-1.5">
+                  <div className="w-full rounded-lg border border-(--accent)/25 bg-(--accent-muted)/45 px-2.5 py-1.5">
+                    <p className="text-center text-[10px] leading-tight font-medium text-(--accent-strong)">
+                      <span className="block">Privacy by Design · Local-first processing</span>
+                      <span className="mt-0.5 block">Pseudonymisation (GDPR Art. 4(5))</span>
+                    </p>
+                    <p className="mt-0.5 text-center text-[10px] font-medium text-(--text-secondary)">
+                      Safer sanitization before ChatGPT and Gemini.
+                    </p>
+                  </div>
                   <div className="flex items-center gap-3 text-[11px] font-semibold text-(--text-tertiary)">
                     <a
                       href="https://github.com/chassaji/lastik"
@@ -1478,12 +1496,6 @@ export default function Home() {
             >
               Review & Masking
             </button>
-          </div>
-
-          <div className="flex-none border-b border-(--border)/40 bg-white/80 px-4 py-2">
-            <p className="text-center text-[11px] md:text-xs font-medium text-(--text-secondary)">
-              The safest way to sanitize your data before using ChatGPT or Gemini.
-            </p>
           </div>
 
           <div className="relative grid grid-cols-1 md:grid-cols-2 flex-1 min-h-0 h-full">
