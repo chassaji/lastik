@@ -44,6 +44,7 @@ Lastik is a technical utility that can support privacy workflows. It is not lega
 
 - **Pseudonymisation (GDPR Art. 4(5))**: Tag mode replaces values with reversible placeholders linked through local/exported mappings.
 - **Privacy by Design (GDPR Art. 25)**: Processing is performed in browser runtime without sending document text by app masking logic.
+- **Data minimisation (GDPR Art. 5(1)(c))**: Lastik does not require user accounts. The app masking logic does not send document text or PII to backend APIs. Infrastructure providers may still process standard operational request metadata (for example IP address and user-agent) in hosting logs.
 - **Personal Data Scope (GDPR Art. 4(1))**: The tool targets common personal data fields such as names, contact details, document and financial identifiers, dates, and IP addresses.
 - **Limitation (GDPR Art. 9)**: Special categories of personal data (for example health, religion, political views) are not explicitly classified by dedicated detectors.
 

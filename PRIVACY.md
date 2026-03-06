@@ -16,6 +16,7 @@ Lastik can support privacy workflows. This document is technical guidance, not l
 
 - **Pseudonymisation (GDPR Art. 4(5))**: Tag mode replaces personal data with reversible placeholders (for example `[PERSON_1]`) using local/exported mapping rules.
 - **Privacy by Design (GDPR Art. 25)**: Core masking operations are performed locally in browser runtime, reducing data transfer to third parties.
+- **Data minimisation (GDPR Art. 5(1)(c))**: Lastik does not require user accounts. The app masking logic does not send document text or PII to backend APIs. Infrastructure providers may still process standard operational request metadata (for example IP address and user-agent) in hosting logs.
 - **Personal data categories (GDPR Art. 4(1))**: The rule set targets typical personal data, including names, contact details, document identifiers, financial identifiers, dates, and IP addresses.
 
 ## Special Categories and Limits
